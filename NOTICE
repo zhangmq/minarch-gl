@@ -11,6 +11,17 @@ NextUI is itself a fork of MinUI, originally created by Shaun Inman
 (https://github.com/shauninman/MinUI), and has been substantially modified and
 extended by the NextUI team and contributors.
 
+Bundled cores (GPLv2, shipped as separate .so files inside each pak)
+  flycast            https://github.com/flyinghead/flycast
+                     @ aa97a6d64fb47d3ce0febaa575b26d975dd916e4 (v2.0)
+  mupen64plus-next   https://github.com/libretro/mupen64plus-libretro-nx
+                     @ 6752836de8b224febfd5708444755b77712ac939
+  yabasanshiro       https://github.com/zhangmq/yabause
+                     @ 9b36fd6ef8985129d2f829a24d0d3e43f8a621e2 (branch h700)
+  Each pak ships the full licence text of its core next to it as
+  LICENSE-<core>; the pins above are the sources those binaries were built
+  from, with the recipes in workspace/h700/cores/makefile.
+
 Relation to upstream
   This repository is not affiliated with or endorsed by NextUI, LoveRetro,
   MinUI, TrimUI or Anbernic. It is an experimental downstream project. Files

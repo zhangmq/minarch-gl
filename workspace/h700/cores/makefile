@@ -72,7 +72,9 @@ mupen64plus_next_SUBMODULES =
 yabasanshiro_REPO = https://github.com/zhangmq/yabause
 yabasanshiro_BRANCH = h700
 yabasanshiro_HASH = 9b36fd6ef8985129d2f829a24d0d3e43f8a621e2
-yabasanshiro_BUILD_PATH = yabause/src/libretro
+# Relative to src/ (the core template always prefixes `src/`): the libretro port
+# sits one level down, inside the yabause checkout this core is fetched as.
+yabasanshiro_BUILD_PATH = yabasanshiro/yabause/src/libretro
 yabasanshiro_CORE = yabasanshiro_libretro.so
 yabasanshiro_MAKE = CFLAGS="-DYAB_ASYNC_RENDERING -DYAB_CORE_SHARED_CONTEXT" \
 	CXXFLAGS="-DYAB_ASYNC_RENDERING -DYAB_CORE_SHARED_CONTEXT" \

@@ -19,6 +19,10 @@ yabasanshiro 接进 NextUI 的菜单、着色器和存档体系，以"自带前�
 - 3 个核心和 4 个 pak **还没实际构建**（只做过 `make -n` 验证）
 - 没上机、没建 GitHub 远程、没发 release
 
+> **2026-10-21 当日更新**：上面这段是会话开始时的状态，已完成其中第 1、2、5 步
+> （核心/pak 已构建、远程仓库已建）；**设备冒烟未做**（设备被其他任务占用）。
+> 新会话请以 `HANDOFF.md` 的「当前状态」「基线」「发布清单」为准。
+
 本轮任务，按顺序做（除非我另说）：
 1. `make build` 复现 md5；再 `make check`（应报 no changes）。
 2. `make cores`：构建 flycast / mupen64plus_next / yabasanshiro 与 DC、NAOMI、N64、

@@ -55,7 +55,7 @@ core build machinery) is inherited unchanged.
 
 ## Build
 
-Prerequisites: `docker`, `git`, `curl`, `zip`, ~2 GB free.
+Prerequisites: `docker`, `git`, `curl`, `zip` or `bsdtar`, ~2 GB free.
 
 ```sh
 make build            # frontend only          -> dist/minarch-gl.elf

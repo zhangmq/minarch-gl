@@ -28,6 +28,17 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 command -v docker >/dev/null || die "docker is required (toolchain image $IMG)"
 command -v git >/dev/null || die "git is required (core source pins)"
 
+# Pak archives are plain zips; `zip` is the documented tool but bsdtar writes an
+# equivalent archive (same relative paths, unix modes preserved -- launch.sh must
+# stay executable when the pak is unzipped on the device).
+if command -v zip >/dev/null; then
+	zipdir() { zip -qr "$1" "$2"; }
+elif command -v bsdtar >/dev/null; then
+	zipdir() { bsdtar -a -cf "$1" "$2"; }
+else
+	die "need zip or bsdtar to build the pak archives"
+fi
+
 say "base tree ($BASE_SHA)"
 BASE=$(sh "$ROOT/tools/base.sh")
 
@@ -45,8 +56,15 @@ printf '%s\n' "$(printf '%s' "$BASE_SHA" | cut -c1-7)" > "$TREE/workspace/hash.t
 
 run() {
 	# $1: shell snippet inside the container (the workspace tree is at /workspace)
+	# Core sources are pre-cloned on the host and copied in with the host uid, so
+	# the container's git (running as root) refuses them with "dubious ownership"
+	# when a core's MAKE runs `git submodule update`.  Accept the mounted tree for
+	# those calls only -- the setting lives in the container's environment, the
+	# host git config and the file ownership are left alone.
 	docker run --rm -v "$TREE/workspace:/workspace" \
 		-e PLATFORM=h700 -e UNION_PLATFORM=h700 \
+		-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory \
+		-e GIT_CONFIG_VALUE_0='*' \
 	"$IMG" /bin/bash -c ". /root/.bashrc && $1"
 }
 
@@ -121,8 +139,15 @@ for c in $CORES; do
 		cp -a "$ROOT/paks/$tag/." "$stage/"
 		cp -f "$DIST/minarch-gl.elf" "$stage/minarch-gl.elf"
 		cp -f "$core_so" "$stage/${c}_libretro.so"
+		# A pak is a binary distribution: the frontend half is PolyForm
+		# Noncommercial (LICENSE + NOTICE), the core half is GPLv2 and ships its
+		# own licence text.  The pins/source links live in NOTICE.
+		cp -f "$ROOT/LICENSE" "$ROOT/NOTICE" "$stage/"
+		core_lic="$CORE_CACHE/$c/LICENSE"
+		[ -f "$core_lic" ] || die "missing $core_lic (licence text for $c)"
+		cp -f "$core_lic" "$stage/LICENSE-$c"
 		rm -f "$DIST/$tag.pak.zip"
-		(cd "$ROOT/build/paks" && zip -qr "$DIST/$tag.pak.zip" "$tag.pak")
+		(cd "$ROOT/build/paks" && zipdir "$DIST/$tag.pak.zip" "$tag.pak")
 		echo "pak: $DIST/$tag.pak.zip" >&2
 	done
 done
