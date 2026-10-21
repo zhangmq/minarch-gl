@@ -1,0 +1,8 @@
+AGENTS.md
+CLAUDE.md
+build/
+dist/
+.cache/
+*.o
+*.so
+*.elf

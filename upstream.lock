@@ -1,0 +1,24 @@
+# Pinned upstream inputs for minarch-gl.
+#
+# Format: plain shell assignments (tools/*.sh source this file).  Change these
+# only through `tools/sync.py pin <sha>` or by hand with a matching commit --
+# they are the single source of truth for what this tree was built against.
+
+# NextUI base tree (frontend sources live at workspace/all/minarch; our overlay
+# is assembled on top of this tree -- see tools/build.sh).
+BASE_REPO=LoveRetro/NextUI
+BASE_REF=main
+BASE_SHA=5291344b3aceae5fa197437a70824afb41e2d338
+BASE_DATE=2026-10-20T22:03:58Z
+
+# Cross toolchain, pinned by digest: a floating tag rebuilds differently next
+# month and the elf md5 / behaviour baseline stops meaning anything.
+TOOLCHAIN_IMAGE=ghcr.io/loveretro/h700-toolchain
+TOOLCHAIN_DIGEST=sha256:bf5d8f9f5442cad789aa77176bc059ec823caefa3258bf30780eee681c777119
+
+# Saturn core: our own fork, single branch, h700 only.  Keep in sync with the
+# yabasanshiro_HASH line in workspace/h700/cores/makefile (tools/sync.py check
+# verifies the two agree).
+YABAUSE_REPO=zhangmq/yabause
+YABAUSE_REF=h700
+YABAUSE_SHA=9b36fd6ef8985129d2f829a24d0d3e43f8a621e2

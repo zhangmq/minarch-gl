@@ -1,0 +1,22 @@
+# Files in this repository that replace an upstream NextUI file, and where the
+# upstream copy lives in the base tree.
+#
+# Only these files need a three-way merge on an upstream bump.  Everything else
+# under workspace/all/minarch-gl/ is new code with no upstream counterpart, and
+# upstream changes to files we do NOT list here are inherited automatically by
+# the assembled build tree (no action needed).
+#
+# Format: <path in this repo> <path in the NextUI tree> (whitespace separated)
+
+workspace/all/minarch-gl/api.c             workspace/all/common/api.c
+workspace/all/minarch-gl/api.h             workspace/all/common/api.h
+workspace/all/minarch-gl/generic_video.c   workspace/all/common/generic_video.c
+workspace/all/minarch-gl/platform.c        workspace/h700/platform/platform.c
+workspace/all/minarch-gl/minarch.c         workspace/all/minarch/minarch.c
+workspace/all/minarch-gl/ma_audio.c        workspace/all/minarch/ma_audio.c
+workspace/all/minarch-gl/ma_config.c       workspace/all/minarch/ma_config.c
+workspace/all/minarch-gl/ma_core.c         workspace/all/minarch/ma_core.c
+workspace/all/minarch-gl/ma_environment.c  workspace/all/minarch/ma_environment.c
+workspace/all/minarch-gl/ma_saves.c        workspace/all/minarch/ma_saves.c
+workspace/all/minarch-gl/ma_video.c        workspace/all/minarch/ma_video.c
+workspace/all/minarch-gl/ma_internal.h     workspace/all/minarch/ma_internal.h

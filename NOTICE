@@ -1,0 +1,39 @@
+NOTICE
+
+minarch-gl is a community frontend overlay for NextUI (Anbernic H700 devices).
+
+Upstream
+  NextUI       https://github.com/LoveRetro/NextUI
+  Base commit  5291344b3aceae5fa197437a70824afb41e2d338 (2026-10-20)
+  License      PolyForm Noncommercial 1.0.0 (see LICENSE)
+
+NextUI is itself a fork of MinUI, originally created by Shaun Inman
+(https://github.com/shauninman/MinUI), and has been substantially modified and
+extended by the NextUI team and contributors.
+
+Relation to upstream
+  This repository is not affiliated with or endorsed by NextUI, LoveRetro,
+  MinUI, TrimUI or Anbernic. It is an experimental downstream project. Files
+  under workspace/all/minarch-gl/ that share a name with an upstream file are
+  modified copies of that file; the rest of the frontend sources used at build
+  time come unmodified from the pinned NextUI tree.
+
+  Upstream's own notice follows for completeness:
+
+    This project is a fork of MinUI, originally created by Shaun Inman.
+    Source: https://github.com/shauninman/MinUI
+
+    MinUI was made available for forking and personal use per the following
+    statement in its original README:
+
+      "Developers — I am not soliciting source contributions. Please feel
+      free to fork or learn from any of my repos but I don't have time to
+      manage a community or be managed by one."
+
+    This fork has been substantially modified and extended across 800+
+    commits by the NextUI team and contributors. It is not affiliated with or
+    endorsed by the original author.
+
+No warranty
+  Provided as-is, without warranty of any kind. Running unsigned frontend code
+  on your device is your own choice; keep a backup of your SD card.

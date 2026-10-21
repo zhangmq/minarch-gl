@@ -1,0 +1,13 @@
+{
+  "name": "NAOMI",
+  "type": "EMU",
+  "description": "Sega NAOMI arcade via the flycast libretro core on minarch-gl",
+  "author": "zhangmq",
+  "repo_url": "https://github.com/zhangmq/minarch-gl",
+  "release_filename": "NAOMI.pak.zip",
+  "platforms": [
+    "h700"
+  ],
+  "launch": "launch.sh",
+  "version": "0.1.0"
+}

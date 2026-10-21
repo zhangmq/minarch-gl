@@ -1,0 +1,388 @@
+#pragma once
+
+#include <SDL2/SDL.h>
+#include <stdint.h>
+#include <pthread.h>
+#include <stdbool.h>
+#include <unistd.h>
+#include <sys/stat.h>
+
+#include "libretro.h"
+#include "defines.h"
+#include "api.h"
+#include "config.h"
+#include "utils.h"
+
+struct Core {
+	int initialized;
+	int need_fullpath;
+
+	const char tag[8]; // eg. GBC
+	const char name[128]; // eg. gambatte
+	const char version[128]; // eg. Gambatte (v0.5.0-netlink 7e02df6)
+	const char extensions[128]; // eg. gb|gbc|dmg
+
+	const char config_dir[MAX_PATH]; // eg. /mnt/sdcard/.userdata/h700/GB-gambatte
+	const char states_dir[MAX_PATH]; // eg. /mnt/sdcard/.userdata/arm-480/GB-gambatte
+	const char saves_dir[MAX_PATH]; // eg. /mnt/sdcard/Saves/GB
+	const char bios_dir[MAX_PATH]; // eg. /mnt/sdcard/Bios/GB
+	const char cheats_dir[MAX_PATH]; // eg. /mnt/sdcard/Cheats/GB
+	const char overlays_dir[MAX_PATH]; // eg. /mnt/sdcard/Cheats/GB
+
+	double fps;
+	double sample_rate;
+	double aspect_ratio;
+	// av_info.geometry max dimensions (RA hw-render FBO sizing input:
+	// video_driver.c:4602 max_dim = MAX(max_width, max_height)).
+	unsigned max_width;
+	unsigned max_height;
+	// av_info.geometry base dimensions: RA video_driver_get_core_aspect
+	// fallback (video_driver.c:2574-2577) and the integer-scale content base.
+	unsigned base_width;
+	unsigned base_height;
+
+	void* handle;
+	void (*init)(void);
+	void (*deinit)(void);
+
+	void (*get_system_info)(struct retro_system_info *info);
+	void (*get_system_av_info)(struct retro_system_av_info *info);
+	void (*set_controller_port_device)(unsigned port, unsigned device);
+
+	void (*reset)(void);
+	void (*run)(void);
+	size_t (*serialize_size)(void);
+	bool (*serialize)(void *data, size_t size);
+	bool (*unserialize)(const void *data, size_t size);
+	void (*cheat_reset)(void);
+	void (*cheat_set)(unsigned id, bool enabled, const char*);
+	bool (*load_game)(const struct retro_game_info *game);
+	bool (*load_game_special)(unsigned game_type, const struct retro_game_info *info, size_t num_info);
+	void (*unload_game)(void);
+	unsigned (*get_region)(void);
+	void *(*get_memory_data)(unsigned id);
+	size_t (*get_memory_size)(unsigned id);
+
+	retro_core_options_update_display_callback_t update_visibility_callback;
+
+	/* Latency bookkeeping for RETRO_ENVIRONMENT_SET_MINIMUM_AUDIO_LATENCY
+	 * (63): what the core asked for, what we actually run, and the last
+	 * cumulative underrun count handed to the 62 callback. */
+	unsigned audio_latency_request_ms;
+	unsigned audio_latency_current_ms;
+	unsigned audio_underruns_last;
+
+	/* RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK (62): the core's
+	 * "how full is the audio buffer" hook, used for adaptive frameskip
+	 * (mgba, pcsx_rearmed, Yabadabadoo's frameskip=auto).  Called once per
+	 * frame from the main loop after core.run() with no audio lock held;
+	 * cleared by Core_quit() so a new core never inherits it. */
+	retro_audio_buffer_status_callback_t audio_buffer_status;
+};
+
+struct Game {
+	char path[MAX_PATH];
+	char name[MAX_PATH]; // TODO: rename to basename?
+	char alt_name[MAX_PATH]; // alternate name, eg. unzipped rom file name
+	char m3u_path[MAX_PATH];
+	char tmp_path[MAX_PATH]; // location of unzipped file
+	void* data;
+	size_t size;
+	int is_open;
+};
+
+enum {
+	SCALE_NATIVE,
+	SCALE_ASPECT,
+	SCALE_ASPECT_SCREEN,
+	SCALE_FULLSCREEN,
+	SCALE_CROPPED,
+	SCALE_COUNT,
+};
+
+extern enum retro_pixel_format fmt;
+
+extern struct Core core;
+extern struct Game game;
+extern struct retro_disk_control_ext_callback disk_control_ext;
+extern GFX_Renderer renderer;
+extern SDL_Surface *screen;
+
+extern int quit;
+extern int show_menu;
+/* RETRO_ENVIRONMENT_POLL_TYPE_OVERRIDE from the core (RA enum poll_type:
+ * 0 = don't care, 1 = EARLY, 2 = LATE). Set in ma_environment.c, consumed by
+ * the main loop in minarch.c. */
+extern int input_poll_type_override;
+extern int input_state_polled_this_frame;
+/* The d-pad/stick toggle hotkey: must run right after EVERY input poll, not
+ * only the core's poll_cb (a core asking for EARLY polling -- mupen with its
+ * threaded renderer on -- never calls poll_cb, so the frontend polls in the
+ * run loop and would otherwise never dispatch the hotkey). */
+void dpad_policy_hotkey(void);
+/* RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK (62): report the audio
+ * ring's occupancy to the core once per frame (main loop, after core.run(),
+ * no audio lock held).  No-op when the core never registered a callback. */
+void MA_Audio_buffer_status_tick(void);
+/* Software present path accounting for the 5 s telemetry line: video_cb calls
+ * that carried a frame vs. dupes (data == NULL).  Resets on read. */
+void MA_video_take_frame_stats(unsigned *new_frames, unsigned *dupes);
+/* Frontend-side hotkeys that are NOT part of the upstream Shortcuts dispatch
+ * (d-pad policy, disc swap).  Every input poll must call this -- the three poll
+ * sites are EARLY (minarch.c run loop) and NORMAL/LATE (ma_core.c). */
+void ma_poll_hotkeys(void);
+extern int newScreenshot;
+extern int fast_forward;
+extern int rewinding;
+extern int ff_audio;
+/* Set by the libretro audio batch callback whenever a frame actually wrote
+ * audio into the ring buffer (RA pace composition: audio backpressure then
+ * holds the loop, so the main-loop timer must not add a second sleep). */
+extern volatile int ma_audio_wrote_frame;
+extern int use_core_fps;
+extern int rewind_pressed;
+extern int rewind_toggle;
+extern int ff_toggled;
+extern int ff_hold_active;
+extern int ff_paused_by_rewind_hold;
+
+extern int screen_scaling;
+extern int screen_effect;
+
+extern int DEVICE_WIDTH;
+extern int DEVICE_HEIGHT;
+extern int DEVICE_PITCH;
+extern int ambient_mode;
+extern volatile int show_debug;
+extern int shader_reset_suppressed;
+
+extern char* scaling_labels[];
+extern int simple_mode;
+extern int resampling_quality;
+extern int screen_sharpness;
+extern int cfg_screenx;
+extern int cfg_screeny;
+extern int overlay;
+extern int sync_ref;
+extern int max_ff_speed;
+extern int overclock;
+
+extern int rewind_cfg_enable;
+extern int rewind_cfg_buffer_mb;
+extern int rewind_cfg_granularity;
+extern int rewind_cfg_audio;
+extern int rewind_cfg_compress;
+extern int rewind_cfg_lz4_acceleration;
+extern int rewind_init_ready;
+
+#include "ma_rewind.h"
+
+// Deferred auto-resume (see ma_saves.c): a core that refuses retro_unserialize
+// until it has run once (mupen64plus-next does) is retried from the run loop.
+int State_resume_pending(void);
+void State_resume_retry(void);
+
+/* -----------------------------------------------------------------------
+   Input / shortcut / options enums and types
+   Moved from minarch.c so the input module can access them.
+   ----------------------------------------------------------------------- */
+
+#define LOCAL_BUTTON_COUNT 18 // depends on device
+#define RETRO_BUTTON_COUNT 16 // allow L3/R3 to be remapped by user if desired, eg. Virtual Boy uses extra buttons for right d-pad
+
+typedef struct ButtonMapping {
+	char* name;
+	int retro;
+	int local; // TODO: dislike this name...
+	int mod;
+	int default_;
+	int ignore;
+} ButtonMapping;
+
+typedef struct Option {
+	char* key;
+	char* name; // desc
+	char* desc; // info, truncated
+	char* full; // info, longer but possibly still truncated
+	char *category;
+	char* var;
+	int default_value;
+	int value;
+	int count; // TODO: drop this?
+	int lock;
+	int hidden;
+	char** values;
+	char** labels;
+} Option;
+typedef struct OptionCategory {
+	char *key;
+	char *desc;
+	char *info;
+} OptionCategory;
+typedef struct OptionList {
+	int count;
+	int changed;
+	Option* options;
+
+	int enabled_count;
+	Option** enabled_options;
+
+	OptionCategory *categories;
+} OptionList;
+
+struct Config {
+	char* system_cfg;
+	char* default_cfg;
+	char* user_cfg;
+	char* shaders_preset;
+	char* device_tag;
+	OptionList frontend;
+	OptionList core;
+	OptionList shaders;
+	OptionList shaderpragmas[3];
+	ButtonMapping* controls;
+	ButtonMapping* shortcuts;
+	int loaded;
+	int initialized;
+};
+
+extern struct Config config;
+extern ButtonMapping default_button_mapping[];
+extern ButtonMapping core_button_mapping[];
+extern int gamepad_type;
+extern int last_rewind_pressed;
+
+void Config_syncFrontend(char* key, int value);
+
+// Special per-game hooks (defined in minarch.c)
+void Special_updatedDMGPalette(int frames);
+void Special_render(void);
+
+// Libretro environment callback (defined in minarch.c)
+bool environment_callback(unsigned cmd, void *data);
+
+enum {
+	FE_OPT_SCALING,
+	FE_OPT_RESAMPLING,
+	FE_OPT_AMBIENT,
+	FE_OPT_EFFECT,
+	FE_OPT_OVERLAY,
+	FE_OPT_SCREENX,
+	FE_OPT_SCREENY,
+	FE_OPT_SHARPNESS,
+	FE_OPT_SYNC_REFERENCE,
+	FE_OPT_OVERCLOCK,
+	FE_OPT_DEBUG,
+	FE_OPT_MAXFF,
+	FE_OPT_FF_AUDIO,
+	FE_OPT_REWIND_ENABLE,
+	FE_OPT_REWIND_BUFFER,
+	FE_OPT_REWIND_GRANULARITY,
+	FE_OPT_REWIND_COMPRESSION,
+	FE_OPT_REWIND_COMPRESSION_ACCEL,
+	FE_OPT_REWIND_AUDIO,
+	FE_OPT_COUNT,
+};
+
+enum {
+	SHORTCUT_SAVE_STATE,
+	SHORTCUT_LOAD_STATE,
+	SHORTCUT_RESET_GAME,
+	SHORTCUT_SAVE_QUIT,
+	SHORTCUT_CYCLE_SCALE,
+	SHORTCUT_CYCLE_EFFECT,
+	SHORTCUT_TOGGLE_FF,
+	SHORTCUT_HOLD_FF,
+	SHORTCUT_TOGGLE_REWIND,
+	SHORTCUT_HOLD_REWIND,
+	SHORTCUT_GAMESWITCHER,
+	SHORTCUT_SCREENSHOT,
+	// minarch-gl: switch the d-pad between its own buttons and the analog
+	// stick (for SKUs with no analog stick).  See ma_core.c.
+	SHORTCUT_TOGGLE_DPAD,
+	// minarch-gl: multi-disc games (the frontend has no disc menu; these are
+	// the whole disc UI).  MENU+L1 / MENU+R1 by default.  See ma_core.c.
+	SHORTCUT_PREV_DISC,
+	SHORTCUT_NEXT_DISC,
+	// Trimui only
+	SHORTCUT_TOGGLE_TURBO_A,
+	SHORTCUT_TOGGLE_TURBO_B,
+	SHORTCUT_TOGGLE_TURBO_X,
+	SHORTCUT_TOGGLE_TURBO_Y,
+	SHORTCUT_TOGGLE_TURBO_L,
+	SHORTCUT_TOGGLE_TURBO_L2,
+	SHORTCUT_TOGGLE_TURBO_R,
+	SHORTCUT_TOGGLE_TURBO_R2,
+	//
+	SHORTCUT_COUNT,
+};
+
+#include "ma_options.h"
+
+/* -----------------------------------------------------------------------
+   Symbols defined in minarch.c shared with extracted modules
+   ----------------------------------------------------------------------- */
+
+struct Cheats; // forward declaration for Core_applyCheats
+
+// Label arrays
+extern char* button_labels[];
+extern char* gamepad_labels[];
+extern char* gamepad_values[];
+extern char* onoff_labels[];
+extern char* sync_ref_labels[];
+extern int has_custom_controllers;
+
+// Shader option indices
+enum {
+	SH_EXTRASETTINGS,
+	SH_SHADERS_PRESET,
+	SH_NROFSHADERS,
+
+	SH_SHADER1,
+	SH_SHADER1_FILTER,
+	SH_SRCTYPE1,
+	SH_SCALETYPE1,
+	SH_UPSCALE1,
+
+	SH_SHADER2,
+	SH_SHADER2_FILTER,
+	SH_SRCTYPE2,
+	SH_SCALETYPE2,
+	SH_UPSCALE2,
+
+	SH_SHADER3,
+	SH_SHADER3_FILTER,
+	SH_SRCTYPE3,
+	SH_SCALETYPE3,
+	SH_UPSCALE3,
+
+	SH_NONE
+};
+
+// Sync reference source
+enum {
+	SYNC_SRC_AUTO,
+	SYNC_SRC_SCREEN,
+	SYNC_SRC_CORE,
+};
+
+// Config loaded state
+enum {
+	CONFIG_NONE,
+	CONFIG_CONSOLE,
+	CONFIG_GAME,
+};
+
+// Config write mode
+enum {
+	CONFIG_WRITE_ALL,
+	CONFIG_WRITE_GAME,
+};
+
+// Functions defined in minarch.c
+void hdmimon(void);
+void Core_applyCheats(struct Cheats *cheats);
+
+#include "ma_config.h"
+#include "ma_menu.h"

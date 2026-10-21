@@ -1,0 +1,496 @@
+#include <stdlib.h>
+#include <msettings.h>
+
+#include <SDL2/SDL_image.h>
+
+#include "notification.h"
+#include "ra_integration.h"
+
+#include "ma_internal.h"
+#include "ma_cheats.h"
+#include "ma_audio.h"
+#include "ma_input.h"
+#include "ma_options.h"
+#include "ma_frontend_opts.h"
+#include "ma_saves.h"
+#include "ma_video.h"
+#include "ma_core.h"
+#include "ma_game.h"
+#include "ma_gl.h"
+#include "ma_present.h"
+#include "ma_environment.h"
+#include "ma_config.h"
+#include "ma_runframe.h"
+#include "ma_pace.h"
+
+///////////////////////////////////////
+
+SDL_Surface* screen;
+int quit = 0;
+int newScreenshot = 0;
+int show_menu = 0;
+
+static int loopprof_on = -1;
+static uint64_t loopprof_run_ns, loopprof_rest_ns, loopprof_t0;
+static unsigned loopprof_n;
+static uint32_t loopprof_last_ms;
+static uint64_t loopprof_now(void) {
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+int simple_mode = 0;
+enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_XRGB8888;
+
+// default frontend options
+int screen_scaling = SCALE_ASPECT;
+int resampling_quality = 2;
+int ambient_mode = 0;
+int screen_sharpness = SHARPNESS_SOFT;
+int screen_effect = EFFECT_NONE;
+int cfg_screenx = 64;
+int cfg_screeny = 64;
+int overlay = 0; 
+int use_core_fps = 0;
+int sync_ref = 0;
+volatile int show_debug = 0;
+int max_ff_speed = 3; // 4x
+int ff_audio = 0;
+int fast_forward = 0;
+int rewind_pressed = 0;
+int rewind_toggle = 0;
+int last_rewind_pressed = 0;
+int ff_toggled = 0;
+int ff_hold_active = 0;
+int ff_paused_by_rewind_hold = 0;
+int rewinding = 0;
+int rewind_cfg_enable = MINARCH_DEFAULT_REWIND_ENABLE;
+int rewind_cfg_buffer_mb = MINARCH_DEFAULT_REWIND_BUFFER_MB;
+int rewind_cfg_granularity = MINARCH_DEFAULT_REWIND_GRANULARITY;
+int rewind_cfg_audio = MINARCH_DEFAULT_REWIND_AUDIO;
+int rewind_cfg_compress = 1;
+int rewind_cfg_lz4_acceleration = MINARCH_DEFAULT_REWIND_LZ4_ACCELERATION;
+int rewind_init_ready = 0; // gate Rewind_init from syncFrontend until startup is past Core_load
+int overclock = 0; // auto
+int has_custom_controllers = 0;
+int gamepad_type = 0; // index in gamepad_labels/gamepad_values
+
+// these are no longer constants as of the RG CubeXX (even though they look like it)
+int DEVICE_WIDTH = 0;
+int DEVICE_HEIGHT = 0;
+int DEVICE_PITCH = 0;
+int shader_reset_suppressed = 0;
+
+GFX_Renderer renderer;
+
+///////////////////////////////////////
+
+struct Core core;
+
+
+
+///////////////////////////////
+static struct Special {
+	int palette_updated;
+} special;
+void Special_updatedDMGPalette(int frames) {
+	// LOG_info("Special_updatedDMGPalette(%i)\n", frames);
+	special.palette_updated = frames; // must wait a few frames
+}
+static void Special_refreshDMGPalette(void) {
+	special.palette_updated -= 1;
+	if (special.palette_updated>0) return;
+	
+	int rgb = getInt("/tmp/dmg_grid_color");
+	GFX_setEffectColor(rgb);
+}
+static void Special_init(void) {
+	if (special.palette_updated>1) special.palette_updated = 1;
+	// else if (exactMatch((char*)core.tag, "GBC"))  {
+	// 	putInt("/tmp/dmg_grid_color",0xF79E);
+	// 	special.palette_updated = 1;
+	// }
+}
+void Special_render(void) {
+	if (special.palette_updated) Special_refreshDMGPalette();
+}
+static void Special_quit(void) {
+	system("rm -f /tmp/dmg_grid_color");
+}
+///////////////////////////////
+
+///////////////////////////////
+
+void hdmimon(void) {
+	// handle HDMI change
+	static int had_hdmi = -1;
+	int has_hdmi = GetHDMI();
+	if (had_hdmi==-1) had_hdmi = has_hdmi;
+	if (has_hdmi!=had_hdmi) {
+		had_hdmi = has_hdmi;
+
+		LOG_info("restarting after HDMI change...\n");
+		Menu_beforeSleep();
+		sleep(1); // cable-seating debounce; the output switch itself happens at next app start
+		show_menu = 0;
+		quit = 1;
+	}
+}
+
+#define PWR_UPDATE_FREQ 5
+#define PWR_UPDATE_FREQ_INGAME 20
+
+int main(int argc , char* argv[]) {
+	//static char asoundpath[MAX_PATH];
+	//sprintf(asoundpath, "%s/.asoundrc", getenv("HOME"));
+	//LOG_info("minarch: need asoundrc at %s\n", asoundpath);
+	//if(exists(asoundpath))
+	//	LOG_info("asoundrc exists at %s\n", asoundpath);
+	//else 
+	//	LOG_info("asoundrc does not exist at %s\n", asoundpath);
+
+	if(argc < 2)
+		return EXIT_FAILURE;
+
+	PWR_setCPUSpeed(CPU_SPEED_PERFORMANCE); // start in performance mode for fast loading
+	PWR_pinToCores(CPU_CORE_PERFORMANCE); // thread affinity
+
+	char core_path[MAX_PATH];
+	char rom_path[MAX_PATH];
+	char tag_name[MAX_PATH];
+
+	strcpy(core_path, argv[1]);
+	strcpy(rom_path, argv[2]);
+	getEmuName(rom_path, tag_name);
+	
+	LOG_info("rom_path: %s\n", rom_path);
+	
+	screen = GFX_init(MODE_MENU);
+
+	// initialize default shaders
+	GFX_initShaders();
+	PLAT_initNotificationTexture();
+
+	PAD_init();
+	DEVICE_WIDTH = screen->w;
+	DEVICE_HEIGHT = screen->h;
+	DEVICE_PITCH = screen->pitch;
+	// LOG_info("DEVICE_SIZE: %ix%i (%i)\n", DEVICE_WIDTH,DEVICE_HEIGHT,DEVICE_PITCH);
+	
+	LEDS_initLeds();
+	VIB_init();
+	PWR_init();
+	if (!HAS_POWER_BUTTON)
+		PWR_disableSleep();
+	MSG_init();
+	IMG_Init(IMG_INIT_PNG);
+	Core_open(core_path, tag_name);
+
+	Game_open(rom_path); // nes tries to load gamegenie setting before this returns ffs
+	if (!game.is_open) goto finish;
+	
+	simple_mode = exists(SIMPLE_MODE_PATH);
+	
+	// restore options
+	Config_load(); // before init?
+	Config_init();
+	Config_readOptions(); // cores with boot logo option (eg. gb) need to load options early
+	
+	Core_init();
+
+	// Initialize RetroAchievements after core.init() but before Core_load()
+	// Set up memory accessors for achievement memory reading
+	RA_setMemoryAccessors(core.get_memory_data, core.get_memory_size);
+	RA_init();
+
+	// TODO: find a better place to do this
+	// mixing static and loaded data is messy
+	// why not move to Core_init()?
+	Menu_setCoreVersionDesc(core.version);
+	Core_load();
+
+	// GLES hardware-render cores negotiate the GL context during
+	// retro_load_game; the core's context_reset is run once after load_game
+	// returns (Core_load -> MA_GL_context_reset), never from inside
+	// SET_HW_RENDER. See the comment in MA_GL_set_hw_render().
+	
+	Input_init(NULL);
+	Config_readOptions(); // but others load and report options later (eg. nes)
+	Config_readControls(); // restore controls (after the core has reported its defaults)
+
+	// Mute audio during startup to avoid pops (InitSettings would be logical, but too late)
+	SND_overrideMute(1);
+	SND_init(core.sample_rate, core.fps);
+	SND_registerDeviceWatcher(Audio_onSinkChanged);
+	InitSettings(); // after we initialize audio
+	Menu_init();
+	Notification_init();
+	
+	// Load game for RetroAchievements tracking (must be after Notification_init)
+	// Pass ROM data if available, otherwise just path (for cores that load from file)
+	{
+		char* rom_path_for_ra = game.tmp_path[0] ? game.tmp_path : game.path;
+		RA_loadGame(rom_path_for_ra, game.data, game.size, core.tag);
+	}
+	
+	State_resume();
+	Menu_initState(); // make ready for state shortcuts
+
+	PWR_disableAutosleep();
+	// we dont need five second updates while ingame, and wifi status isnt displayed either
+	PWR_updateFrequency(PWR_UPDATE_FREQ, 0); 
+
+	// force a vsync immediately before loop
+	// for better frame pacing?
+	GFX_clearAll();
+	GFX_clearLayers(0);
+	GFX_clear(screen);
+
+	// need to draw real black background first otherwise u get weird pixels sometimes
+
+	GFX_flip(screen);
+
+	Special_init(); // after config
+
+	chooseSyncRef();
+	
+	int has_pending_opt_change = 0;
+
+	// then initialize custom  shaders from settings
+	initShaders();
+	Config_readOptions();
+	applyShaderSettings();
+	int rewind_initialized = Rewind_init(core.serialize_size ? core.serialize_size() : 0);
+	rewind_init_ready = 1;  // Mark setup as attempted, even if rewind init failed, so option changes can retry it later.
+	if (rewind_initialized && core.serialize_size) Rewind_on_state_change();
+	// release config when all is loaded
+	Config_free();
+
+	LOG_info("total startup time %ims\n\n",SDL_GetTicks());
+	LOG_info("minarch: entering main loop, MA_GL_active=%d\n", MA_GL_is_active());
+	
+	// we started in performance mode, now reset to the desired mode
+	// if the config didn't specify the desired cpu speed, the default is 0 = auto
+	setOverclock(overclock);
+
+	while (!quit) {
+		GFX_startFrame();
+
+		/* Clear the "audio wrote this frame" flag (read by pace_frame for
+		 * RA-style pace composition). */
+		ma_audio_wrote_frame = 0;
+
+		/* RA core_run's poll composition, keyed on RA's four-value override
+		 * enum (DONTCARE 0 / EARLY 1 / NORMAL 2 / LATE 3):
+		 *   EARLY  - the frontend polls here, before retro_run (RA
+		 *            core_run:9116-9117).  flycast and mupen64plus-next ask
+		 *            for it whenever their threaded renderer is on, and mupen
+		 *            then never calls poll_cb at all
+		 *            (mupen64plus-core/src/main/main.c:259-263).
+		 *   NORMAL - the core polls through our poll_cb when it asks
+		 *            (core_input_poll_callback), so nothing happens here.
+		 *   LATE   - the frontend polls on the core's first input_state read
+		 *            of the frame (core_input_state_callback), which is what
+		 *            the flag below is cleared for.
+		 * DONTCARE (0, the default) behaves as NORMAL, RA's own default.
+		 * There are exactly three poll sites -- EARLY here, NORMAL and LATE in
+		 * ma_core.c -- and every one of them also dispatches the d-pad/stick
+		 * hotkey (dpad_policy_hotkey); nothing else in the tree calls PAD_poll.
+		 * (An older comment here claimed run_frame's rewind-wait paths poll by
+		 * themselves and could poll twice on an override core; the run loop no
+		 * longer has such paths, and the d-pad hotkey silently stopped firing
+		 * on the EARLY path until it was dispatched here too.) */
+		input_state_polled_this_frame = 0;
+		if (input_poll_type_override == 1) {
+			input_state_polled_this_frame = 1;
+			input_poll_callback();
+			ma_poll_hotkeys();
+		}
+
+		{
+			if (loopprof_on < 0) loopprof_on = getenv("MINARCH_VIDEO_PROFILE") ? 1 : 0;
+			loopprof_t0 = loopprof_on ? loopprof_now() : 0;
+		}
+		run_frame();
+		{
+			if (loopprof_on) {
+				uint64_t t = loopprof_now();
+				loopprof_run_ns += t - loopprof_t0;
+				loopprof_t0 = t;
+			}
+		}
+
+		/* RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK (62): report the
+		 * audio ring's occupancy to the core once per frame, after its
+		 * retro_run and before pacing -- RA does the same in core_run
+		 * (runloop.c:8029-8065).  No-op unless a core registered. */
+		MA_Audio_buffer_status_tick();
+
+		// Deferred auto-resume (see ma_saves.c): mupen64plus-next refuses a
+		// state load until its emulator thread has run once, so the startup
+		// attempt is retried here, right after the first frames.
+		if (State_resume_pending()) State_resume_retry();
+
+		// Hardware-render cores present from their own video callback
+		// (MA_GL_video_refresh), the same place the software path presents
+		// from -- RetroArch's shape, drawn and flipped inside the core's
+		// video_cb.  Nothing to drive from the main loop.
+
+		// The single pacing site for both core families (see pace_frame).
+		MA_pace_frame();
+
+		// Measurement only (MINARCH_FRAME_LOG); see frame_histogram_tick.
+		MA_telemetry_tick();
+
+		// The debug HUD is minarch's original one: the software path stamps it
+		// into the core frame (ma_video.c), the hw-render path rasterizes the
+		// same function onto a frontend surface in its present callback, and
+		// both poll the CPU/GPU telemetry from inside drawDebugHud -- exactly
+		// where upstream does.  Nothing to drive from the main loop.
+		
+		// Process RetroAchievements for this frame
+		RA_doFrame();
+		
+		// Update and render notifications overlay
+		Notification_update(SDL_GetTicks());
+		
+		// Poll for volume/brightness/colortemp changes and show system indicators
+		{
+			static int last_volume = -1;
+			static int last_brightness = -1;
+			static int last_colortemp = -1;
+			
+			int cur_volume = GetVolume();
+			int cur_brightness = GetBrightness();
+			int cur_colortemp = GetColortemp();
+			
+			if (last_volume == -1) {
+				// First frame - just initialize cached values, don't show indicator
+				last_volume = cur_volume;
+				last_brightness = cur_brightness;
+				last_colortemp = cur_colortemp;
+			} else {
+				// Check for changes
+				if (cur_volume != last_volume) {
+					last_volume = cur_volume;
+					if (CFG_getNotifyAdjustments())
+						Notification_showSystemIndicator(SYSTEM_INDICATOR_VOLUME);
+				}
+				if (cur_brightness != last_brightness) {
+					last_brightness = cur_brightness;
+					if (CFG_getNotifyAdjustments())
+						Notification_showSystemIndicator(SYSTEM_INDICATOR_BRIGHTNESS);
+				}
+				if (cur_colortemp != last_colortemp) {
+					last_colortemp = cur_colortemp;
+					if (CFG_getNotifyAdjustments())
+						Notification_showSystemIndicator(SYSTEM_INDICATOR_COLORTEMP);
+				}
+			}
+		}
+		
+		Notification_renderToLayer(5);  // Always call - handles cleanup when inactive
+
+		if (has_pending_opt_change) {
+			has_pending_opt_change = 0;
+			if (Core_updateAVInfo()) {
+				LOG_info("AV info changed, reset sound system");
+				SND_resetAudio(core.sample_rate, core.fps);
+			}
+			chooseSyncRef();
+		}
+
+
+		if (show_menu) {
+			PWR_updateFrequency(PWR_UPDATE_FREQ,1);
+			Menu_loop();
+			// The menu runs on the one GL context this frontend owns
+			// (generic_video.c:625) and composites its CPU surfaces through the
+			// shared ui_layer path, so nothing else can leave another context
+			// current. Re-make ours anyway before the next retro_run's glsm
+			// BIND + core render: it is one MakeCurrent and it keeps the call
+			// order explicit for the cores that cache GL object wrappers
+			// (flycast's GLCache, GLideN64's Context).
+			MA_GL_make_current();
+			// Process RA async operations while menu is shown
+			RA_idle();
+			PWR_updateFrequency(PWR_UPDATE_FREQ_INGAME,0);
+			has_pending_opt_change = config.core.changed;
+			chooseSyncRef();
+		}
+
+		Audio_checkAndResetIfNeeded();
+
+		hdmimon();
+
+		if (loopprof_on) {
+			uint64_t t = loopprof_now();
+			loopprof_rest_ns += t - loopprof_t0;
+			loopprof_t0 = t;
+			loopprof_n++;
+			uint32_t now_ms = (uint32_t)(t / 1000000ull);
+			if (!loopprof_last_ms) loopprof_last_ms = now_ms;
+			if (now_ms - loopprof_last_ms >= 5000) {
+				LOG_info("minarch: loop %.2f ms avg (run_frame %.2f, rest %.2f) over %u frames\n",
+						(double)(loopprof_run_ns + loopprof_rest_ns) / 1e6 / (loopprof_n ? loopprof_n : 1),
+						(double)loopprof_run_ns / 1e6 / (loopprof_n ? loopprof_n : 1),
+						(double)loopprof_rest_ns / 1e6 / (loopprof_n ? loopprof_n : 1), loopprof_n);
+				fflush(stdout);
+				loopprof_run_ns = loopprof_rest_ns = 0; loopprof_n = 0; loopprof_last_ms = now_ms;
+			}
+		}
+	}
+	int cw, ch;
+	unsigned char* pixels = GFX_GL_screenCapture(&cw, &ch);
+	
+	renderer.dst = pixels;
+	SDL_Surface* rawSurface = SDL_CreateRGBSurfaceWithFormatFrom(
+		pixels, cw, ch, 32, cw * 4, SDL_PIXELFORMAT_ABGR8888
+	);
+	SDL_Surface* converted = SDL_ConvertSurfaceFormat(rawSurface, screen->format->format, 0);
+	screen = converted;
+	SDL_FreeSurface(rawSurface);
+	free(pixels); 
+	GFX_animateSurfaceOpacity(converted, 0, 0, cw, ch, 255, 0, CFG_getMenuTransitions() ? 200 : 20, 1);
+	SDL_FreeSurface(converted); 
+	
+	Video_cleanup();
+
+	PLAT_clearTurbo();
+
+	Menu_quit();
+	QuitSettings();
+
+finish:
+    Perf_setCPUMonitorEnabled(0);
+
+	// Unload game and shutdown RetroAchievements before Notification_quit —
+	// RA background threads (sync, badge downloads) may call notification
+	// APIs, so the notification mutex should outlive all RA threads.
+	RA_unloadGame();
+	RA_quit();
+	Notification_quit();
+	
+	Game_close();
+	Rewind_free();
+	Core_unload();
+	// GLES hardware-render cores free their GL resources here while the
+	// context is still alive.
+	MA_GL_context_destroy();
+	Core_quit();
+	Core_close();
+	Config_quit();
+	Special_quit();
+	MSG_quit();
+	PWR_quit();
+	VIB_quit();
+	SND_removeDeviceWatcher();
+	// Disabling this is a dumb hack for bluetooth, we should really be using 
+	// bluealsa with --keep-alive=-1 - but SDL wont reconnect the stream on next start.
+	// Reenable as soon as we have a more recent SDL available, if ever.
+	//SND_quit();
+	PAD_quit();
+	GFX_quit();
+	Menu_waitScreenshot();
+	return EXIT_SUCCESS;
+}
