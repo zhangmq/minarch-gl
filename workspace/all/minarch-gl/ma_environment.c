@@ -31,6 +31,8 @@ int input_state_polled_this_frame = 0;
 
 static bool set_rumble_state(unsigned port, enum retro_rumble_effect effect, uint16_t strength) {
 	// TODO: handle other args? not sure I can
+	// keep the motor silent while rewinding, same as audio (see run_frame)
+	if (rewinding) return 1;
 	VIB_setStrength(strength);
 	return 1;
 }
@@ -142,9 +144,7 @@ bool environment_callback(unsigned cmd, void *data) { // copied from picoarch in
 		return false;  // Indicate failure
 	}
 	case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS: { /* 11 */
-		// puts("RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS\n");
 		Input_init((const struct retro_input_descriptor *)data);
-		return false;
 		break;
 	}
 	case RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE: { /* 13 */

@@ -528,6 +528,7 @@ SDL_Surface *GFX_init(int mode)
 	asset_rects[ASSET_WIFI_OFF] = (SDL_Rect){SCALE4(40, 104, 12, 12)};
 	asset_rects[ASSET_CHECKCIRCLE] = (SDL_Rect){SCALE4(1, 117, 10, 10)};
 	asset_rects[ASSET_LOCK] = (SDL_Rect){SCALE4(12, 116, 8, 11)};
+	asset_rects[ASSET_TROPHY] = (SDL_Rect){SCALE4(78, 117, 10, 11)};
 	asset_rects[ASSET_HOLE] = (SDL_Rect){SCALE4(1, 63, 20, 20)};
 	asset_rects[ASSET_GAMEPAD] = (SDL_Rect){SCALE4(91, 51, 17, 10)};
 	asset_rects[ASSET_SETTINGS] = (SDL_Rect){SCALE4(21, 117, 10, 10)};
@@ -4077,6 +4078,22 @@ int PAD_tappedSelect(uint32_t now)
 }
 
 ///////////////////////////////
+
+// the RLIMIT_STACK default (8MB per thread) wastes address space
+// workaround for libretro/gpsp#248 and NextUI#814
+#define THREAD_STACK_SIZE (1024 * 1024)
+
+static int spawn_thread(pthread_t *pt, void *(*fn)(void *), void *arg)
+{
+	pthread_attr_t attr;
+	pthread_attr_init(&attr);
+	pthread_attr_setstacksize(&attr, THREAD_STACK_SIZE);
+	int rc = pthread_create(pt, &attr, fn, arg);
+	pthread_attr_destroy(&attr);
+	return rc;
+}
+
+///////////////////////////////
 static struct VIB_Context
 {
 	int initialized;
@@ -4109,7 +4126,7 @@ static void *VIB_thread(void *arg)
 void VIB_init(void)
 {
 	vib.queued_strength = vib.strength = 0;
-	pthread_create(&vib.pt, NULL, &VIB_thread, NULL);
+	spawn_thread(&vib.pt, &VIB_thread, NULL);
 	vib.initialized = 1;
 }
 void VIB_quit(void)
@@ -4244,7 +4261,7 @@ void PWR_init(void)
 
 	PWR_updateBatteryStatus();
 
-	pthread_create(&pwr.battery_pt, NULL, &PWR_monitorBattery, &pwr);
+	spawn_thread(&pwr.battery_pt, &PWR_monitorBattery, &pwr);
 	LOG_info("PWR_init complete\n");
 }
 void PWR_quit(void)

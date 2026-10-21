@@ -163,6 +163,7 @@ enum {
 	
 	ASSET_CHECKCIRCLE,
 	ASSET_LOCK,
+	ASSET_TROPHY,
 	ASSET_SETTINGS,
 	ASSET_STORE,
 	ASSET_GAMEPAD,
@@ -762,6 +763,7 @@ void PLAT_animateSurfaceOpacity(SDL_Surface *inputSurface, int x, int y, int w, 
 void PLAT_vsync(int remaining);
 void PLAT_blitRenderer(GFX_Renderer* renderer);
 void PLAT_flip(SDL_Surface* screen, int sync);
+int PLAT_captureScreenshot(SDL_Surface* out);
 void PLAT_GL_Swap();
 void GFX_GL_Swap();
 // GL context accessors for the libretro hardware-render (glsm) path

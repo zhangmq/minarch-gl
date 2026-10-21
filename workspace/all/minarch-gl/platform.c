@@ -47,10 +47,10 @@ static void LED_shutdown(void);
 #define EV_KEY 0x01
 #define EV_ABS 0x03
 
-// Built-in controls use raw evdev codes. The in-tree SDL patch restores joystick
-// enumeration, but platform input deliberately skips this device because its SDL
-// button ordering differs from the external-pad JOY_* mapping and would duplicate
-// the evdev events.
+// Built-in controls use raw evdev codes (POWER is on another device, and MENU
+// tap-versus-hold needs the raw 312/354 timing). The toolchain's SDL gives this
+// pad the TrimUI button layout for SDL apps and paks; platform input skips it in
+// SDL (is_builtin_pad) so its presses aren't read twice.
 #define RAW_HATY 17
 #define RAW_HATX 16
 #define RAW_LSY  3
@@ -367,23 +367,21 @@ static void apply_hat_axis(int neg_id, int pos_id, int value, uint32_t tick) {
 static void detect_device(void) {
 	char *device = getenv("DEVICE");
 
-	// Nominal panel rates derived from stock DTB timings.
-	// HDMI uses its separate 60 Hz mode through SCREEN_FPS.
 	static const struct {
 		const char *model;
 		double fps;
 	} panel_rates[] = {
-		{ "rg28xx",     57.732 },
-		{ "rg34xx",     59.155 },
-		{ "rg34xxsp",   59.155 },
-		{ "rg35xxplus", 59.256 },
-		{ "rg35xxh",    59.032 },
-		{ "rg35xxpro",  59.032 },
-		{ "rg35xxsp",   59.524 },
-		{ "rg40xxh",    59.710 },
-		{ "rg40xxv",    59.710 },
-		{ "rgcubexx",   59.593 },
-		{ "rgsp",       59.155 },
+		{ "rg28xx",     57.7317 }, // Measured, matches DTB
+		{ "rg34xx",     59.155 },  // DTB-derived
+		{ "rg34xxsp",   59.5691 }, // Measured
+		{ "rg35xxplus", 59.256 },  // DTB-derived
+		{ "rg35xxh",    59.032 },  // DTB-derived
+		{ "rg35xxpro",  59.032 },  // DTB-derived
+		{ "rg35xxsp",   59.524 },  // DTB-derived
+		{ "rg40xxh",    59.710 },  // DTB-derived
+		{ "rg40xxv",    59.7104 }, // Measured, matches DTB
+		{ "rgcubexx",   59.593 },  // DTB-derived
+		{ "rgsp",       59.5691 }, // Measured
 	};
 	panel_fps = 60.0;
 	for (size_t i = 0; i < sizeof(panel_rates) / sizeof(panel_rates[0]); i++) {
@@ -790,6 +788,11 @@ void PLAT_updateInput(const SDL_Event *event) {
     default:
         break;
     }
+}
+
+int PLAT_supportsOverscan(void) { 
+	// Overscan is typically supported on square panels (e.g., 1:1 aspect ratio) - mostly Cube XX right now.
+	return panel_h == panel_w; 
 }
 
 void PLAT_getBatteryStatus(int* is_charging, int* charge) {

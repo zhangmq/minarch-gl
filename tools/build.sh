@@ -32,21 +32,26 @@ say "base tree ($BASE_SHA)"
 BASE=$(sh "$ROOT/tools/base.sh")
 
 say "assembling $TREE"
-rm -rf "$TREE"
+# The container writes build products into the tree as root; deleting those from
+# the host user fails.  Fall back to a root container for the wipe.
+if [ -e "$TREE" ]; then
+	rm -rf "$TREE" 2>/dev/null ||
+		docker run --rm -v "$ROOT/build:/b" "$IMG" rm -rf /b/tree
+fi
 mkdir -p "$ROOT/build"
 cp -a "$BASE" "$TREE"
 cp -a "$ROOT/workspace/." "$TREE/workspace/"
 printf '%s\n' "$(printf '%s' "$BASE_SHA" | cut -c1-7)" > "$TREE/workspace/hash.txt"
 
 run() {
-	# $1: shell snippet inside the container (workdir /root/workspace)
-	docker run --rm -v "$TREE:/root/workspace" \
+	# $1: shell snippet inside the container (the workspace tree is at /workspace)
+	docker run --rm -v "$TREE/workspace:/workspace" \
 		-e PLATFORM=h700 -e UNION_PLATFORM=h700 \
-		"$IMG" /bin/bash -c ". ~/.bashrc && $1"
+	"$IMG" /bin/bash -c ". /root/.bashrc && $1"
 }
 
 say "building minarch-gl"
-run 'cd /root/workspace/all/minarch-gl && make'
+run 'cd /workspace/all/minarch-gl && make'
 
 mkdir -p "$DIST"
 cp -f "$TREE/workspace/all/minarch-gl/build/h700/minarch-gl.elf" "$DIST/minarch-gl.elf"
@@ -95,7 +100,7 @@ preclone() {
 for c in $CORES; do
 	preclone "$c" "$(pin "$c" REPO)" "$(pin "$c" BRANCH)" "$(pin "$c" HASH)" "$(pin "$c" SUBMODULES)"
 	say "building core: $c"
-	run "cd /root/workspace && CORE=$c make core"
+	run "cd /workspace && CORE=$c make core"
 done
 
 say "assembling paks"
