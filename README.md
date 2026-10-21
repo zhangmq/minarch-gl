@@ -20,8 +20,8 @@ options, savestates, resume and shaders while running the cores above.
 | | |
 |---|---|
 | Platform | `h700` only (the three core pins were chosen for this SoC) |
-| Status | experimental, actively tested on an RGSP |
-| Distribution | self-contained paks (`Emus/h700/<TAG>.pak`) — stock `.system` stays untouched |
+| Status | experimental; developed against an RGSP, device testing scheduled |
+| Distribution | one Tools pak (`Tools/h700/Minarch GL.pak`); it installs the cores into `Emus/h700/` and can restore stock at any time |
 | Upstream | pinned overlay on [LoveRetro/NextUI](https://github.com/LoveRetro/NextUI), see `upstream.lock` |
 
 ## Not official
@@ -40,18 +40,21 @@ reviewed and tested on device by a human. Every test we rely on is a real
 ```
 workspace/                  # the slice: paths identical to NextUI's tree
 ├── all/minarch-gl/         #   frontend overlay (27 files; 12 of them replace upstream files)
+├── all/minarch-switch/     #   the Tools-pak UI: installs/removes the frontend + cores
 └── h700/cores/makefile     #   the three cores we build (flycast, mupen64plus_next, yabasanshiro)
-paks/{DC,NAOMI,N64,SATURN}/ #   pak templates: launch.sh, pak.json, default.cfg
+paks/MinarchGL/             #   the one pak we ship: switcher + frontend + cores (payload/)
+paks/LIBRETRO_*/            #   the core paks the switcher installs into Emus/h700
 tools/                      #   base/build/diff/sync helpers
 overlay.map                 #   which repo files override which upstream file
 upstream.lock               #   pinned NextUI sha + toolchain digest + yabause sha
 docs/UPSTREAM-SYNC.md       #   how upstream changes are merged
+docs/SWITCHER.md            #   how the frontend switch works and how to undo it
 ```
 
-Nothing in `workspace/` outside `all/minarch-gl/` is copied upstream code: the
-build assembles NextUI's tree from a pinned tarball and overlays `workspace/` on
-top. Everything else in the base tree (menus, input, rewind, RetroAchievements,
-core build machinery) is inherited unchanged.
+Nothing in `workspace/` outside `all/minarch-gl/` and `all/minarch-switch/` is
+copied upstream code: the build assembles NextUI's tree from a pinned tarball and
+overlays `workspace/` on top. Everything else in the base tree (menus, input,
+rewind, RetroAchievements, core build machinery) is inherited unchanged.
 
 ## Build
 
@@ -59,7 +62,7 @@ Prerequisites: `docker`, `git`, `curl`, `zip` or `bsdtar`, ~2 GB free.
 
 ```sh
 make build            # frontend only          -> dist/minarch-gl.elf
-make cores            # + 3 cores, 4 paks     -> dist/*.pak.zip
+make cores            # + switcher + cores     -> dist/Minarch.GL.pak.zip
 make check            # upstream drift report (no writes)
 make diff             # patches of our overrides vs the pinned base (review)
 ```
@@ -67,31 +70,44 @@ make diff             # patches of our overrides vs the pinned base (review)
 The build:
 1. extracts NextUI at `BASE_SHA` (cached under `.cache/`),
 2. copies it to `build/tree` and overlays `workspace/`,
-3. builds `workspace/all/minarch-gl` inside the pinned toolchain image,
-4. optionally builds the three cores and assembles the pak zips.
+3. builds `workspace/all/minarch-gl` and `workspace/all/minarch-switch` inside
+   the pinned toolchain image,
+4. optionally builds the three cores and assembles the pak.
 
 The toolchain is pinned by digest in `upstream.lock`; the frontend elf is
 reproducible from (base sha, overlay commit, toolchain digest).
 
 ## Install
 
-Copy a pak zip to the SD card, unzip it, delete the zip:
+One pak, and it is a *tool* pak — installing it changes nothing by itself:
 
 ```
-/Emus/h700/SATURN.pak/     Sega Saturn   (yabasanshiro)
-/Emus/h700/N64.pak/        Nintendo 64   (mupen64plus-next)
-/Emus/h700/DC.pak/         Dreamcast     (flycast)
-/Emus/h700/NAOMI.pak/      Sega NAOMI    (flycast)
+unzip Minarch.GL.pak.zip into Tools/h700/      # -> /Tools/h700/Minarch GL.pak/
 ```
 
-Each pak carries its own `minarch-gl.elf` and core, so it never replaces
-`$SYSTEM_PATH/bin/minarch.elf`; removing the folder is a complete rollback.
-ROM folders use the matching tag: `Roms/Sega Saturn (SATURN)/`, `Roms/Nintendo 64 (N64)/`,
-`Roms/Sega Dreamcast (DC)/`, `Roms/Sega NAOMI (NAOMI)/`. BIOS files go under
-`/BIOS/<TAG>/` (see NextUI's emulator notes for which files each system needs).
+Then open **Tools → Minarch GL** and choose **Enable minarch-gl**. That single
+action backs up the stock frontend, installs `minarch-gl`, and puts the three
+core paks into `Emus/h700/`; **Restore stock minarch** undoes it (the core paks
+are hidden again, not deleted). Nothing under `.system` is touched until you
+press Enable. See [docs/SWITCHER.md](docs/SWITCHER.md) for the exact mechanics.
 
-The `DC` and `N64` tags are also used by stand-alone community paks on the Pak
-Store — install one or the other for those systems.
+ROM folders use the tag of the core pak that the tool installs:
+
+```
+Roms/Sega Dreamcast (LIBRETRO_FLYCAST)/        Sega Dreamcast   (flycast)
+Roms/Sega Naomi (LIBRETRO_FLYCAST)/            Sega Naomi       (flycast, same tag/pak)
+Roms/Nintendo 64 (LIBRETRO_MUPEN64PLUS)/       Nintendo 64      (mupen64plus-next)
+Roms/Sega Saturn (LIBRETRO_YABASANSHIRO)/      Sega Saturn      (yabasanshiro)
+Roms/Sega Titan Video (LIBRETRO_YABASANSHIRO)/ Sega ST-V        (yabasanshiro, same tag/pak)
+```
+
+BIOS files go under `/Bios/<TAG>/`, i.e. `Bios/LIBRETRO_FLYCAST/` (both Dreamcast
+and Naomi BIOS files live in that one folder), `Bios/LIBRETRO_MUPEN64PLUS/`, and
+`Bios/LIBRETRO_YABASANSHIRO/` (`saturn_bios.bin` and/or `stvbios.zip`).
+
+The tags are not the community ones (`DC`, `SS`, `N64`) on purpose: the Pak
+Store already ships stand-alone paks with those names, and two paks cannot share
+a tag. `LIBRETRO_FLYCAST` also covers Dreamcast and Naomi with a single pak.
 
 ## Upstream sync
 

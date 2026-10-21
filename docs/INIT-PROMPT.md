@@ -6,35 +6,37 @@
 
 你在 `/home/zmq/projects/minarch-gl` 工作。这是 **minarch-gl**：NextUI（Anbernic H700）
 的下游前端覆盖层，补 libretro hw-render（GLES），把 flycast / mupen64plus-next /
-yabasanshiro 接进 NextUI 的菜单、着色器和存档体系，以"自带前端的 pak"分发。
+yabasanshiro 接进 NextUI 的菜单、着色器和存档体系。
 
 先读这几个文件（按顺序）：
 1. `README.md` —— 项目定位、构建、安装
 2. `AGENTS.md` —— 维护记忆与硬规则
 3. `docs/UPSTREAM-SYNC.md` —— 上游同步策略
-4. `HANDOFF.md` —— 当前状态、SOP、设备冒烟流程、已知坑
+4. `docs/SWITCHER.md` —— 前端切换器机制与手工回滚
+5. `HANDOFF.md` —— 当前状态、SOP、设备冒烟流程、已知坑
 
-当前状态（2026-10-21 bootstrap）：
-- 前端已构建通过：`dist/minarch-gl.elf`，md5 `51d0fc1799b595b166c69b1eda8f6e32`
-- 3 个核心和 4 个 pak **还没实际构建**（只做过 `make -n` 验证）
-- 没上机、没建 GitHub 远程、没发 release
-
-> **2026-10-21 当日更新**：上面这段是会话开始时的状态，已完成其中第 1、2、5 步
-> （核心/pak 已构建、远程仓库已建）；**设备冒烟未做**（设备被其他任务占用）。
-> 新会话请以 `HANDOFF.md` 的「当前状态」「基线」「发布清单」为准。
+当前形态（2026-10-21）：
+- 只发一个 **Tools pak**：`Minarch GL.pak`（切换器 UI + 前端 + 三个核心载荷）。
+  安装不改任何东西；用户在 UI 里按 Enable 才写 `.system/bin/minarch.elf`，
+  同时把核心 pak（`LIBRETRO_FLYCAST` / `LIBRETRO_MUPEN64PLUS` /
+  `LIBRETRO_YABASANSHIRO`）装进 `Emus/h700/`；Restore 一键回滚。
+- 构建：`make build`（前端）、`make cores`（+ 切换器 + 三核心 → `dist/Minarch.GL.pak.zip`）、
+  `make test`（切换器文件逻辑的主机测试）、`make check`（上游漂移）。
+- 前端 md5 基线 `51d0fc1799b595b166c69b1eda8f6e32`；产物表见 `HANDOFF.md`「基线」。
+- **从未上过设备**（设备当时被其他任务占用并冻结）；`zhangmq/minarch-gl` 远程已建但为空。
 
 本轮任务，按顺序做（除非我另说）：
-1. `make build` 复现 md5；再 `make check`（应报 no changes）。
-2. `make cores`：构建 flycast / mupen64plus_next / yabasanshiro 与 DC、NAOMI、N64、
-   SATURN 四个 pak，记录每个产物的尺寸和 md5。
-3. 按 `HANDOFF.md` 的"设备冒烟"流程在 RGSP 上各启动一次，记录 fps/日志/异常。
+1. `make build` 复现 md5，`make check`（应 no changes），`make test`（应全过）。
+2. `make cores`，记录 pak zip 与三个核心的尺寸/md5。
+3. 按 `HANDOFF.md` 的"设备冒烟"：装工具 pak → Enable → 三个系统各启动一次
+   （DC/Naomi、N64、Saturn）→ Restore 一次；记录 fps/日志/异常。
 4. 把结果写回 `HANDOFF.md` 的基线表与 commit message。
-5. 建 `zhangmq/minarch-gl` 远程仓库，准备好首发 release 的清单
-   （elf + 4 个 pak zip + 校验和）；**推送/发布前问我**。
+5. 准备首发 release（`Minarch.GL.pak.zip` + `minarch-gl.elf` + 校验和）；
+   **推送/发布前问我**。
 
 纪律：
 - 不要 `git merge` 上游；同步只走 `tools/sync.py`。
-- 不要动设备 `.system`；pak 只进 `Emus/h700/`。
+- `.system` 只允许切换器在用户点 Enable/Restore 时写；pak 安装本身不得改动它。
 - 设备上结束进程只允许 `kill -9`；自动化前先确认关机守卫。
-- 提交、推送、发布都要我明确说；ST-V 不主动提。
+- 提交、推送、发布都要我明确说。
 - 遇到与本文件描述不符的地方，先查证据（日志/构建产物/digest），别先改代码。

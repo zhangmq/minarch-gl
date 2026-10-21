@@ -1,47 +1,72 @@
 # minarch-gl v0.1.0 — first release
 
-A community GL/hw-render frontend overlay for **NextUI on Anbernic H700**
-handhelds. It adds libretro's `RETRO_ENVIRONMENT_SET_HW_RENDER` (GLES) to
-NextUI's `minarch`, so cores that render through GLES can run inside NextUI's
-menus, shaders and savestate system.
+A community GL/hw-render frontend for **NextUI on Anbernic H700** handhelds. It
+adds libretro's `RETRO_ENVIRONMENT_SET_HW_RENDER` (GLES) to NextUI's `minarch`, so
+cores that render through GLES run inside NextUI's menus, shaders and savestate
+system.
 
-This release ships four **self-contained paks**. Each pak carries its own
-`minarch-gl.elf` and core, so nothing under `.system/bin/` is replaced: stock
-NextUI keeps running everything else, and deleting the pak folder is a complete
-rollback.
+This release is a **single tool pak**. Installing it changes nothing; you pick the
+frontend inside its UI, and it installs the cores for you:
 
-| Pak | System | Core |
-|---|---|---|
-| `DC.pak` | Sega Dreamcast | flycast |
-| `NAOMI.pak` | Sega NAOMI | flycast |
-| `N64.pak` | Nintendo 64 | mupen64plus-next |
-| `SATURN.pak` | Sega Saturn | yabasanshiro |
-
-> Not affiliated with or endorsed by LoveRetro/NextUI, MinUI, TrimUI or
-> Anbernic. Experimental software: back up your SD card.
+```
+Tools/h700/Minarch GL.pak          # unzip Minarch.GL.pak.zip here
+```
 
 ## Install
 
-1. Copy a pak zip to the SD card, e.g. `Emus/h700/`.
-2. Unzip it and delete the zip; you get `Emus/h700/<TAG>.pak/`.
-3. Put ROMs in `Roms/<System> (<TAG>)/` and BIOS files in `/BIOS/<TAG>/`
-   (see NextUI's notes for the files each system needs).
+1. Unzip `Minarch.GL.pak.zip` into `Tools/h700/` on the SD card
+   (you get `Tools/h700/Minarch GL.pak/`).
+2. On the device: **Tools → Minarch GL → Enable minarch-gl**.
+3. Put your ROMs in the folders below and launch them from the menu as usual.
 
-`DC` and `N64` are also used by stand-alone community paks on the Pak Store —
-install one or the other for those systems. Remove the `.pak` folder to roll back.
+Enable does three things, and only when you press it:
+
+* backs up the stock `minarch.elf` and installs minarch-gl behind a small
+  dispatch script (removing the pak later is not enough to revert, use Restore);
+* installs the three core paks into `Emus/h700/`;
+* renames them to `*.pak.disabled` whenever you switch back, so the stock
+  frontend never tries to launch a GLES core it cannot drive.
+
+**Restore stock minarch** in the same menu undoes all of it.
+
+## Systems
+
+| ROM folder | System | Core |
+|---|---|---|
+| `Roms/Sega Dreamcast (LIBRETRO_FLYCAST)/` | Sega Dreamcast | flycast |
+| `Roms/Sega Naomi (LIBRETRO_FLYCAST)/` | Sega Naomi | flycast (same pak) |
+| `Roms/Nintendo 64 (LIBRETRO_MUPEN64PLUS)/` | Nintendo 64 | mupen64plus-next |
+| `Roms/Sega Saturn (LIBRETRO_YABASANSHIRO)/` | Sega Saturn | yabasanshiro |
+| `Roms/Sega Titan Video (LIBRETRO_YABASANSHIRO)/` | Sega ST-V | yabasanshiro (same pak) |
+
+BIOS files go in `/Bios/<TAG>/`:
+
+* `Bios/LIBRETRO_FLYCAST/` — Dreamcast and Naomi BIOS files (e.g. `dc_boot.bin`,
+  `dc_flash.bin`, `naomi.zip`, `naomi_boot*.bin`);
+* `Bios/LIBRETRO_MUPEN64PLUS/` — N64 BIOS/support files, if your setup uses any;
+* `Bios/LIBRETRO_YABASANSHIRO/` — `saturn_bios.bin` and/or `stvbios.zip`.
+
+The tags are the core names on purpose: the Pak Store already ships stand-alone
+paks called `DC`, `SS` and `N64`, and two paks cannot share a tag. One tag serving
+two systems is normal in NextUI (the Saturn family works the same way).
+
+## NextUI updates
+
+A NextUI update replaces `.system/` and therefore removes the switched frontend.
+The tool notices (the frontend shows **Needs reinstall**) and re-applies on one
+press; meanwhile a boot hook hides the GL-only core paks again, so a stock
+frontend is never asked to load a core it cannot run.
 
 ## Artifacts
 
 | File | Size (B) | sha256 |
 |---|---:|---|
 | `minarch-gl.elf` | 667248 | `056fdc29b22b0d3b4947d294896e9baf583e87fbe9774d659e3979cd78f8a66e` |
-| `DC.pak.zip` | 2258640 | `7f427926cdfa80dd8d5f64fa14b80c3f5b58b7a7f926158ad897b6f89ebacc9f` |
-| `NAOMI.pak.zip` | 2258700 | `587fcb510c4b5852ce408be87636d9f62296041b7b8ccb28d86184a9b43157da` |
-| `N64.pak.zip` | 2008615 | `3e8b7608beef03a51f080b6d0aeaf642e61bc4a11ad35ddca3710fea45abec1c` |
-| `SATURN.pak.zip` | 1159295 | `87c05a673bec10b501b7a04f21216c0ec18909a638650500142bcb24f16d7988` |
+| `Minarch.GL.pak.zip` | 4850962 | `a12d843b0b5093ba53007054972d5c1f1b4ddc407a7fd158da57ca28532814ba` |
 
-Each pak contains `launch.sh`, `pak.json`, `default.cfg`, `minarch-gl.elf`, the
-core `.so`, plus `LICENSE` / `NOTICE` / `LICENSE-<core>`.
+`Minarch.GL.pak.zip` contains the frontend (md5 `51d0fc1799b595b166c69b1eda8f6e32`),
+the switcher and the three cores; the switcher's file logic is covered by
+`make test` on the build host.
 
 ## Build provenance
 
@@ -53,20 +78,17 @@ core `.so`, plus `LICENSE` / `NOTICE` / `LICENSE-<core>`.
 | mupen64plus-next | `libretro/mupen64plus-libretro-nx@6752836de8b224febfd5708444755b77712ac939` |
 | yabasanshiro | `zhangmq/yabause@9b36fd6ef8985129d2f829a24d0d3e43f8a621e2` (branch `h700`) |
 
-`minarch-gl.elf` md5 is `51d0fc1799b595b166c69b1eda8f6e32`; it was reproduced
-from an empty `.cache/` and `build/` on 2026-10-21. The cores' md5s are recorded
-in `HANDOFF.md`. Build:
-
 ```sh
 make build   # frontend
-make cores   # + 3 cores + 4 pak zips
+make cores   # + switcher + 3 cores -> dist/Minarch.GL.pak.zip
+make test    # host-side switcher tests
 ```
 
 ## License
 
-The frontend is derived from NextUI and is distributed under PolyForm
-Noncommercial 1.0.0 (`LICENSE`, `NOTICE`) — non-commercial use only. The bundled
-cores are GPLv2 and are shipped as separate `.so` files; their sources are the
+The frontend and the switcher are derived from NextUI and distributed under
+PolyForm Noncommercial 1.0.0 (`LICENSE`, `NOTICE`) — non-commercial use only. The
+bundled cores are GPLv2 and ship as separate `.so` files; their sources are the
 pinned repositories above:
 
 * flycast — <https://github.com/flyinghead/flycast/tree/aa97a6d64fb47d3ce0febaa575b26d975dd916e4>
@@ -74,12 +96,11 @@ pinned repositories above:
 * yabasanshiro — <https://github.com/zhangmq/yabause/tree/9b36fd6ef8985129d2f829a24d0d3e43f8a621e2>
 
 The core build recipes (flags, pins, submodule notes) are in
-`workspace/h700/cores/makefile` in this repository, so the binaries above can be
-rebuilt from those sources with the pinned toolchain.
+`workspace/h700/cores/makefile`, so the binaries can be rebuilt from those
+sources with the pinned toolchain.
 
 ## Status
 
-Experimental. Built and verified structurally (elf identity inside each pak, zip
-layout, executable `launch.sh`, aarch64 dynamic dependencies); **device smoke
-testing on an RGSP was not completed for this build** — see `HANDOFF.md` for the
-fps baseline and the pending checklist.
+Experimental. Built and verified by construction (`make test` for the switcher's
+file logic, elf identity and executable bits inside the pak); **device smoke
+testing on an RGSP was not completed for this build** — see `HANDOFF.md`.

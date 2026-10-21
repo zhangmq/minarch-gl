@@ -1,0 +1,13 @@
+{
+  "name": "Minarch GL",
+  "type": "TOOL",
+  "description": "GL/hw-render frontend for Dreamcast, Naomi, Nintendo 64, Saturn and ST-V. Switches NextUI's frontend to minarch-gl and installs the bundled cores.",
+  "author": "zhangmq",
+  "repo_url": "https://github.com/zhangmq/minarch-gl",
+  "release_filename": "Minarch.GL.pak.zip",
+  "platforms": [
+    "h700"
+  ],
+  "launch": "launch.sh",
+  "version": "0.1.0"
+}

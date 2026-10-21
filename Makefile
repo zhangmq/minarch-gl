@@ -1,6 +1,6 @@
 # minarch-gl -- build entry points (thin wrappers over tools/*.sh)
 
-.PHONY: base build cores paks all check diff clean distclean
+.PHONY: base build cores paks all check test diff clean distclean
 
 all: build cores paks
 
@@ -17,6 +17,10 @@ paks: cores
 
 check:
 	python3 tools/sync.py check
+
+# Host-side tests for the part of the switcher that touches the SD card.
+test:
+	sh tools/test.sh
 
 diff:
 	sh tools/diff.sh

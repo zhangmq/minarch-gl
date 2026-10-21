@@ -63,6 +63,16 @@ Rules of thumb:
 6. **yabause pin duplication.** `YABAUSE_SHA` in `upstream.lock` and
    `yabasanshiro_HASH` in the cores makefile must agree; `tools/sync.py pin`
    warns when they diverge.
+7. **The switcher compiles an upstream file.** `workspace/all/minarch-switch/`
+   links `../settings/menu.cpp` (and its `menu.hpp`) on purpose: that is the
+   system menu framework, and vendoring a copy would drift. If upstream moves or
+   renames it, the build fails loudly — update `MENU_DIR` in
+   `workspace/all/minarch-switch/makefile` (and re-check the API the tool uses:
+   `MenuList`, `MenuItem`, `MenuItemType::List`, `showOverlay`).
+8. **The switcher writes `.system` at runtime.** Not a sync concern, but a bump
+   that changes the frontend's binary name or the pak path scheme would invalidate
+   the dispatch script; `docs/SWITCHER.md` is the contract, and `make test` covers
+   the rest.
 
 ## Cadence
 

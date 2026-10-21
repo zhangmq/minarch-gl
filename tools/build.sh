@@ -76,9 +76,13 @@ cp -f "$TREE/workspace/all/minarch-gl/build/h700/minarch-gl.elf" "$DIST/minarch-
 echo "frontend: $DIST/minarch-gl.elf ($(md5sum "$DIST/minarch-gl.elf" | cut -d' ' -f1))" >&2
 
 if [ -z "${BUILD_CORES:-}" ]; then
-	say "skipping cores (set BUILD_CORES=1 to build the cores and the paks)"
+	say "skipping cores (set BUILD_CORES=1 to build the cores and the pak)"
 	exit 0
 fi
+
+# The switcher only ships inside the pak, so it is built with the pak.
+say "building minarch-switch"
+run 'cd /workspace/all/minarch-switch && make'
 
 if [ "$BUILD_CORES" = "1" ]; then
 	CORES="$ALL_CORES"
@@ -121,36 +125,50 @@ for c in $CORES; do
 	run "cd /workspace && CORE=$c make core"
 done
 
-say "assembling paks"
+say "assembling the Minarch GL pak"
 mkdir -p "$DIST"
+stage="$ROOT/build/paks/Minarch GL.pak"
+rm -rf "$stage"
+mkdir -p "$stage/payload"
+cp -a "$ROOT/paks/MinarchGL/." "$stage/"
+cp -f "$TREE/workspace/all/minarch-switch/build/h700/minarch-switch.elf" "$stage/minarch-switch.elf"
+cp -f "$DIST/minarch-gl.elf" "$stage/payload/minarch-gl.elf"
+# A checkout that lost the exec bit (zip round-trip, copy from another OS) would
+# otherwise ship a pak that cannot be launched; make the bits explicit.
+chmod 0755 "$stage/launch.sh" "$stage/minarch-switch.elf"
+
+# The core paks ride inside the tool pak: the switcher installs them into
+# Emus/h700 when the user enables GL, so the frontend and the cores it needs
+# cannot be installed separately or drift out of step.
 for c in $CORES; do
 	case "$c" in
-		flycast) tags="DC NAOMI" ;;
-		mupen64plus_next) tags="N64" ;;
-		yabasanshiro) tags="SATURN" ;;
-		*) continue ;;
+		flycast) tag=LIBRETRO_FLYCAST ;;          # Dreamcast + Naomi share one tag
+		mupen64plus_next) tag=LIBRETRO_MUPEN64PLUS ;;
+		yabasanshiro) tag=LIBRETRO_YABASANSHIRO ;;
+		*) die "no pak tag for core $c" ;;
 	esac
 	core_so="$TREE/workspace/h700/cores/output/${c}_libretro.so"
 	[ -f "$core_so" ] || die "missing $core_so (core build failed?)"
-	for tag in $tags; do
-		stage="$ROOT/build/paks/$tag.pak"
-		rm -rf "$stage"
-		mkdir -p "$stage"
-		cp -a "$ROOT/paks/$tag/." "$stage/"
-		cp -f "$DIST/minarch-gl.elf" "$stage/minarch-gl.elf"
-		cp -f "$core_so" "$stage/${c}_libretro.so"
-		# A pak is a binary distribution: the frontend half is PolyForm
-		# Noncommercial (LICENSE + NOTICE), the core half is GPLv2 and ships its
-		# own licence text.  The pins/source links live in NOTICE.
-		cp -f "$ROOT/LICENSE" "$ROOT/NOTICE" "$stage/"
-		core_lic="$CORE_CACHE/$c/LICENSE"
-		[ -f "$core_lic" ] || die "missing $core_lic (licence text for $c)"
-		cp -f "$core_lic" "$stage/LICENSE-$c"
-		rm -f "$DIST/$tag.pak.zip"
-		(cd "$ROOT/build/paks" && zipdir "$DIST/$tag.pak.zip" "$tag.pak")
-		echo "pak: $DIST/$tag.pak.zip" >&2
-	done
+	src="$ROOT/paks/$tag"
+	[ -d "$src" ] || die "missing pak template $src"
+	dst="$stage/payload/$tag.pak"
+	cp -a "$src" "$dst"
+	cp -f "$core_so" "$dst/${c}_libretro.so"
+	chmod 0755 "$dst/launch.sh"
+	# A pak is a binary distribution: the frontend half is PolyForm
+	# Noncommercial (LICENSE + NOTICE), the core half is GPLv2 and ships its
+	# own licence text.  The pins/source links live in NOTICE.
+	cp -f "$ROOT/LICENSE" "$ROOT/NOTICE" "$dst/"
+	core_lic="$CORE_CACHE/$c/LICENSE"
+	[ -f "$core_lic" ] || die "missing $core_lic (licence text for $c)"
+	cp -f "$core_lic" "$dst/LICENSE-$c"
+	echo "pak payload: $tag.pak <- $c" >&2
 done
+cp -f "$ROOT/LICENSE" "$ROOT/NOTICE" "$stage/"
+
+rm -f "$DIST/Minarch.GL.pak.zip"
+(cd "$ROOT/build/paks" && zipdir "$DIST/Minarch.GL.pak.zip" "Minarch GL.pak")
+echo "pak: $DIST/Minarch.GL.pak.zip" >&2
 
 say "done"
 ls -l "$DIST"
