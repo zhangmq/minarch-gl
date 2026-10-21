@@ -25,10 +25,13 @@ docker image inspect ghcr.io/loveretro/h700-toolchain@sha256:bf5d8f9f5442cad789a
 make build                            # frontend only; first run downloads ~40 MB base tarball
 ```
 
-Expected: `dist/minarch-gl.elf`. Record its md5 next to the base sha in the
-commit that introduces it (the old NextUI-workspace builds are the reference:
-the deployed elf was built from base 2026-09-07-era sources, so the md5 will
-differ — compare behaviour, not bytes).
+Expected: `dist/minarch-gl.elf`.
+
+The bootstrap build against base `5291344b` produced
+`51d0fc1799b595b166c69b1eda8f6e32` (667 KB, aarch64, NEEDED: SDL2, GLESv2,
+SDL2_image, SDL2_ttf, ...). It has **not** been run on the device yet. The elf
+deployed from the old NextUI-workspace tree was built from 2026-09-07-era
+sources, so its md5 differs — compare behaviour, not bytes.
 
 ## Then
 
