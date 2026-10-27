@@ -103,4 +103,4 @@ sources with the pinned toolchain.
 
 Experimental. Built and verified by construction (`make test` for the switcher's
 file logic, elf identity and executable bits inside the pak); **device smoke
-testing on an RGSP was not completed for this build** — see `HANDOFF.md`.
+testing on an RGSP was not completed for this build**.
