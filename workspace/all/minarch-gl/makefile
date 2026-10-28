@@ -50,6 +50,25 @@ all:
 	@# different SOURCE list, that is done with the MERGED=1 switch this file
 	@# used to carry, not by shipping this file into the tree.)
 	@files="$$(ls *.c *.h 2>/dev/null)"; [ -n "$$files" ] && cp -f $$files $(MERGED_DIR)/ || true
+	@# Pre-fetched frontend deps (libretro-common, libchdr).  The upstream
+	@# makefile clones them into this tree; tools/build.sh seeds a cache here so
+	@# a normal build does not re-fetch them (they are unpinned upstreams, so a
+	@# re-fetch would also silently change the binary -- DEPS_REFRESH=1 rebuilds
+	@# the cache deliberately).
+	@if [ -d ../.minarch-gl-deps ]; then cp -a ../.minarch-gl-deps/. $(MERGED_DIR)/; fi
+	@# Those clone rules also graft the shipped makefile wrappers onto the dep
+	@# (libchdr.makefile -> libchdr/makefile); skipping the clone skips that, and
+	@# then `cd libchdr && make build install` has no build target.
+	@if [ -f $(MERGED_DIR)/libchdr.makefile ]; then cp -f $(MERGED_DIR)/libchdr.makefile $(MERGED_DIR)/libchdr/makefile; fi
+	@# rcheevos: the shipped makefile clones the pinned repo into rcheevos/src on
+	@# first use, and the rcheevos/makefile rule wipes rcheevos/ to place itself.
+	@# Seeding both files first makes that rule a no-op (it has no prerequisites)
+	@# and its clone check (`src/include/rc_client.h` exists) skip the fetch.
+	@if [ -d ../.minarch-gl-deps/rcheevos-src ]; then \
+		mkdir -p $(MERGED_DIR)/rcheevos; \
+		cp -f $(MERGED_DIR)/rcheevos.makefile $(MERGED_DIR)/rcheevos/makefile; \
+		cp -a ../.minarch-gl-deps/rcheevos-src $(MERGED_DIR)/rcheevos/src; \
+	fi
 	$(MAKE) -C $(MERGED_DIR) -f makefile PLATFORM=$(PLATFORM) UNION_PLATFORM=$(UNION_PLATFORM) \
 		SOURCE="$(UPSTREAM_SOURCE)"
 	mkdir -p build/$(PLATFORM)

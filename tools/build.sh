@@ -19,6 +19,7 @@ IMG="$TOOLCHAIN_IMAGE@$TOOLCHAIN_DIGEST"
 TREE="$ROOT/build/tree"
 DIST="$ROOT/dist"
 CORE_CACHE="$ROOT/.cache/cores"
+DEPS_CACHE="$ROOT/.cache/frontend-deps"
 ALL_CORES="flycast mupen64plus_next yabasanshiro"
 CORES_MK="$ROOT/workspace/h700/cores/makefile"
 
@@ -54,6 +55,49 @@ cp -a "$BASE" "$TREE"
 cp -a "$ROOT/workspace/." "$TREE/workspace/"
 printf '%s\n' "$(printf '%s' "$BASE_SHA" | cut -c1-7)" > "$TREE/workspace/hash.txt"
 
+# The upstream minarch makefile fetches its dependencies into the merged build
+# tree (.minarch-gl-build), which is recreated and deleted on every run -- so by
+# default every build re-cloned libretro-common and libchdr (minutes, and the
+# container's TLS stack is the fragile part) and re-cloned the pinned rcheevos.
+# Keep one copy in .cache and seed the tree from it; the recursive make then
+# finds the directories and skips its clone targets.
+#
+# Refresh on demand only (DEPS_REFRESH=1), NEVER on every build: libretro-common
+# and libchdr are unpinned upstreams, so re-fetching would silently change the
+# binary (rcheevos is pinned by rcheevos.makefile and keyed on that pin here).
+say "frontend deps (libretro-common, libchdr, rcheevos)"
+if [ "${DEPS_REFRESH:-0}" = "1" ]; then
+	rm -rf "$DEPS_CACHE"
+fi
+mkdir -p "$DEPS_CACHE"
+for dep in libretro-common:https://github.com/libretro/libretro-common \
+           libchdr:https://github.com/rtissera/libchdr; do
+	name=${dep%%:*}
+	url=${dep#*:}
+	if [ ! -d "$DEPS_CACHE/$name/.git" ]; then
+		say "cloning $name (first time; cached afterwards)"
+		git -c http.version=HTTP/1.1 clone "$url" "$DEPS_CACHE/$name"
+	fi
+	printf '%s %s\n' "$name" "$(git -C "$DEPS_CACHE/$name" rev-parse --short HEAD)"
+done > "$ROOT/build/frontend-deps.txt"
+RCHEEVOS_PIN=$(sed -n 's/^RCHEEVOS_VERSION[[:space:]]*[?:]*=[[:space:]]*//p' \
+	"$TREE/workspace/all/minarch/rcheevos.makefile" | head -1)
+if [ -n "$RCHEEVOS_PIN" ] && { [ ! -f "$DEPS_CACHE/rcheevos-src/include/rc_client.h" ] ||
+		[ "$(git -C "$DEPS_CACHE/rcheevos-src" rev-parse HEAD 2>/dev/null)" != "$RCHEEVOS_PIN" ]; }; then
+	say "cloning rcheevos @ $RCHEEVOS_PIN"
+	rm -rf "$DEPS_CACHE/rcheevos-src"
+	git -c http.version=HTTP/1.1 clone https://github.com/RetroAchievements/rcheevos.git \
+		"$DEPS_CACHE/rcheevos-src"
+	git -C "$DEPS_CACHE/rcheevos-src" checkout --detach "$RCHEEVOS_PIN"
+fi
+if [ -f "$DEPS_CACHE/rcheevos-src/include/rc_client.h" ]; then
+	printf '%s %s\n' rcheevos "$(git -C "$DEPS_CACHE/rcheevos-src" rev-parse --short HEAD)" \
+		>> "$ROOT/build/frontend-deps.txt"
+fi
+cp -f "$ROOT/build/frontend-deps.txt" "$DEPS_CACHE/versions.txt"
+mkdir -p "$TREE/workspace/all/.minarch-gl-deps"
+cp -a "$DEPS_CACHE/." "$TREE/workspace/all/.minarch-gl-deps/"
+
 run() {
 	# $1: shell snippet inside the container (the workspace tree is at /workspace)
 	# Core sources are pre-cloned on the host and copied in with the host uid, so
@@ -61,10 +105,16 @@ run() {
 	# when a core's MAKE runs `git submodule update`.  Accept the mounted tree for
 	# those calls only -- the setting lives in the container's environment, the
 	# host git config and the file ownership are left alone.
+	#
+	# http.version=HTTP/1.1: the frontend build clones libretro-common,
+	# rcheevos and libchdr inside this container on every run, and the image's
+	# GnuTLS/HTTP2 stack dies with "GnuTLS recv error (-9) / early EOF" on
+	# GitHub more often than not (host curl is fine, HTTP/1.1 is fine).
 	docker run --rm -v "$TREE/workspace:/workspace" \
 		-e PLATFORM=h700 -e UNION_PLATFORM=h700 \
-		-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory \
+		-e GIT_CONFIG_COUNT=2 -e GIT_CONFIG_KEY_0=safe.directory \
 		-e GIT_CONFIG_VALUE_0='*' \
+		-e GIT_CONFIG_KEY_1=http.version -e GIT_CONFIG_VALUE_1=HTTP/1.1 \
 	"$IMG" /bin/bash -c ". /root/.bashrc && $1"
 }
 
