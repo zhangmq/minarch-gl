@@ -2614,7 +2614,7 @@ SDL_Color GFX_mapColor(uint32_t c)
 #define SAMPLES 512 // default
 #endif
 
-/* --- Audio: RA-aligned latency and rate control ---------------------------
+/* --- Audio: latency and rate control --------------------------------------
  * RA derives the device buffer from the audio latency setting, not from a
  * constant: audio/audio_driver.c  frames = input_rate * audio_latency / 1000.
  * SDL wants a power-of-two sample count, so round up - the same normalisation
@@ -2627,17 +2627,15 @@ SDL_Color GFX_mapColor(uint32_t c)
  * (RA's own default is 64 ms, which lands at 8192 ALSA frames = 186 ms here -
  * more slack than a handheld needs.)
  *
- * RA's dynamic rate control is a bounded proportional term around the
- * half-full setpoint (audio/audio_driver.c:1268-1345) whose gain is
- * rate_control_delta; minarch used to allow a measured-fps feed-forward of up
- * to 1.5x, i.e. it stretched the audio instead of reporting the shortfall.
- * Overridable per pak through the environment (no new cfg key).
+ * calculateBufferAdjustment is a bounded proportional term around the
+ * half-full setpoint (RA's dynamic rate control shape, +-1%).  The
+ * measured-fps feed-forward on top of it is this frontend's own model, not
+ * RA's: "Core Sync: Screen" means the audio follows the rate the loop actually
+ * achieves (see safe_ratio below).  Overridable per pak through the
+ * environment (no new cfg key).
  * ------------------------------------------------------------------------ */
 #ifndef AUDIO_LATENCY_MS_DEFAULT
 #define AUDIO_LATENCY_MS_DEFAULT 32
-#endif
-#ifndef AUDIO_RATE_CONTROL_DELTA
-#define AUDIO_RATE_CONTROL_DELTA 0.005f
 #endif
 
 static unsigned snd_latency_ms(void)
@@ -2997,35 +2995,23 @@ size_t SND_batchSamples(const SND_Frame *frames, size_t frame_count)
 	{
 		bufferadjustment = 0.0f;
 	}
-	/* RA bounds the dynamic term by rate_control_delta (audio_driver.c:1268) */
-	if (bufferadjustment > AUDIO_RATE_CONTROL_DELTA)
-		bufferadjustment = AUDIO_RATE_CONTROL_DELTA;
-	else if (bufferadjustment < -AUDIO_RATE_CONTROL_DELTA)
-		bufferadjustment = -AUDIO_RATE_CONTROL_DELTA;
 
+	/* Screen reference ("Core Sync: Screen") means the display's rate is the
+	 * master: the game runs at the rate the loop actually achieves and the
+	 * audio is resampled to follow it.  That is this frontend's own audio model
+	 * since 703cbd7f ("New audio system implemented"), and what makes Screen
+	 * coherent for a core whose declared rate differs from the panel's
+	 * (e252bb43 added the option; 3e03898e made PAL default to the core rate
+	 * instead).  Do NOT bound this by AUDIO_RATE_CONTROL_DELTA: that is
+	 * RetroArch's rule for its audio-sync model, which has no
+	 * screen-reference mode to keep faithful to -- applying it here stopped the
+	 * audio from following (0.995 while the loop wanted 0.839) and turned
+	 * Screen+PAL into underruns (2026-10-28 round 2).  The wide 0.5..1.5 bound
+	 * below is the frontend's own sanity limit. */
 	float safe_ratio = snd.frame_rate / current_fps;
 	if (!isfinite(safe_ratio))
 	{
 		safe_ratio = 1.0f;
-	}
-	/* RA never trims by the measured fps: keep only a bounded A/V trim, so a
-	 * core that cannot keep up underruns (and is counted) instead of the
-	 * frontend stretching the audio by up to 1.5x. */
-	{
-		static int trim_clamped_logged = 0;
-		float hi = 1.0f + AUDIO_RATE_CONTROL_DELTA;
-		float lo = 1.0f - AUDIO_RATE_CONTROL_DELTA;
-		if (safe_ratio > hi || safe_ratio < lo)
-		{
-			if (!trim_clamped_logged)
-			{
-				trim_clamped_logged = 1;
-				LOG_info("[Audio] fps trim clamped: frame_rate %.2f / measured fps %.2f = %.4f -> %.4f (RA bounds this by rate_control_delta)\n",
-						snd.frame_rate, current_fps, snd.frame_rate / current_fps,
-						safe_ratio > hi ? hi : lo);
-			}
-			safe_ratio = safe_ratio > hi ? hi : lo;
-		}
 	}
 
 	ratio = safe_ratio + bufferadjustment;
@@ -3035,11 +3021,11 @@ size_t SND_batchSamples(const SND_Frame *frames, size_t frame_count)
 		ratio = 1.0;
 	}
 
-	/* RA-magnitude bound: base +/- dynamic term stays within ~(1+delta)^2 */
-	if (ratio > 1.0f + 2.0f * AUDIO_RATE_CONTROL_DELTA)
-		ratio = 1.0f + 2.0f * AUDIO_RATE_CONTROL_DELTA;
-	else if (ratio < 1.0f - 2.0f * AUDIO_RATE_CONTROL_DELTA)
-		ratio = 1.0f - 2.0f * AUDIO_RATE_CONTROL_DELTA;
+	// limit ratio so it wont go crazy for some reason
+	if (ratio > 1.5)
+		ratio = 1.5;
+	else if (ratio < 0.5)
+		ratio = 0.5;
 
 	perf.ratio = (ratio > 0.0) ? ratio : current_fps;
 
