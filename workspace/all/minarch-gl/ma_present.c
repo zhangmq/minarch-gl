@@ -10,7 +10,6 @@ static uint64_t ma_freq = 0;
 static uint64_t st_swap_sum = 0, st_swap_max = 0, st_gap_last = 0, st_gap_min = 0;
 static unsigned st_swaps = 0, st_over_1ms = 0, st_over_half = 0;
 static unsigned st_gaps = 0, st_gap_lt5 = 0, st_gap_lt12 = 0, st_gap_lt20 = 0, st_gap_ge20 = 0;
-static volatile int st_blocked = 0;
 
 void MA_present_init(SDL_Window *window) {
 	ma_window = window;
@@ -41,8 +40,6 @@ void MA_present_frame(void) {
 	if (us > 1000) st_over_1ms++;
 	if (us > 8300) st_over_half++;   // half a 60Hz period: only a display-side
 	                                 // block or a GPU settle can take this long
-	// Pace composition (RetroArch runloop PACE_VSYNC).
-	if (us > 1000) st_blocked = 1;
 
 	if (st_gap_last) {
 		uint64_t gap = (now - st_gap_last) * 1000000ull / (ma_freq ? ma_freq : 1);
@@ -55,8 +52,6 @@ void MA_present_frame(void) {
 	}
 	st_gap_last = now;
 }
-
-int MA_present_blocked(void) { int b = st_blocked; st_blocked = 0; return b; }
 
 void MA_present_take_stats(uint64_t *swap_sum_us, uint64_t *swap_max_us, unsigned *swaps,
 		unsigned *over_1ms, unsigned *over_half_period,

@@ -26,14 +26,14 @@ void MA_present_init(SDL_Window *window);
 // Put the frame on the display.  The only swap in the frontend.
 void MA_present_frame(void);
 
-// Read-and-clear: did the present block this frame?  Consumed by the pacing
-// code exactly like ma_audio_wrote_frame (RetroArch runloop PACE_VSYNC): a
-// present that blocked means the display paced this frame, so the timer must
-// not be added on top.
-int MA_present_blocked(void);
-
 // Telemetry, inert unless the caller logs it: swap-call cost and the
 // present-to-present gap distribution.  Taken and reset together.
+//
+// The swap cost is measured here and is NOT a pacing input: a swap that blocked
+// waited for a vblank, and waiting cannot shorten a core's frame, so it never
+// makes the timer redundant (RetroArch's runloop_pace_sources() keeps VSYNC and
+// TIMER in the same bitmask).  ma_pace.c owns the pace; this file reports what
+// the swap cost.
 void MA_present_take_stats(uint64_t *swap_sum_us, uint64_t *swap_max_us, unsigned *swaps,
 		unsigned *over_1ms, unsigned *over_half_period,
 		unsigned *gaps, uint64_t *gap_min_us,

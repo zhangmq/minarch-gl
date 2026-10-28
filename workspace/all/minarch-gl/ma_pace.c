@@ -12,18 +12,32 @@
 #include "ma_gl.h"
 
 // See ma_pace.h.  Pacing is a run-loop decision -- not
-// a GL, SDL or core one. It composes the RA runloop pace bits (runloop.c
-// RUNLOOP_PACE_*):
+// a GL, SDL or core one. It composes the RA runloop pace bits (runloop.c /
+// runloop.h RUNLOOP_PACE_*):
 //
 //   PACE_AUDIO  the blocking audio write (audio_sample_batch_callback) already
 //               held retro_run to the sound card's drain rate. That is the one
 //               real-time master clock -- the only reference that cannot drift
-//               against what the user hears. Nothing is added on top of it.
+//               against what the user hears. Nothing is added on top of it:
+//               two clocks holding one loop beat against each other and the
+//               slower one wins, which is the stutter RA warns about
+//               (runloop.c, menu-rate comment).
 //   PACE_TIMER  fallback for frames that wrote no audio at all (silent scenes,
-//               muted cores, cores without an audio device): schedule the
-//               present at frame_index * 1/fps on an absolute timeline, sleep
-//               the bulk and busy-wait the remainder. Re-anchor when more than
-//               two frames are lost.
+//               muted cores, cores without an audio device, and the fixed-rate
+//               audio path): schedule the present at frame_index * 1/fps on an
+//               absolute timeline, sleep the bulk and busy-wait the remainder.
+//               Re-anchor when more than two frames are lost.
+//
+// The display is NOT a third exclusive source.  RA keeps its pace sources in a
+// bitmask (runloop_pace_sources(), runloop.h) and lets every active source hold
+// the loop -- VSYNC and TIMER are set together in its exact-rate mode -- so the
+// slowest one wins and the others cost nothing.  A swap that blocked means the
+// present waited for a vblank; it says nothing about a core whose target frame
+// is LONGER than the panel period, because vsync can only lengthen a frame,
+// never shorten it.  Gating the timer on the present (as this used to) left a
+// 50 fps core on a 59.57 Hz panel with no clock at all: the light scenes ran at
+// the panel rate (the 2026-10-28 yaba report).  Hence: audio holds exclusively,
+// the display does not.
 //
 // Skipped while fast-forwarding: limitFF (ma_runframe.c) owns that cadence, and
 // while rewinding the loop is driven by the rewind cadence.
@@ -40,8 +54,6 @@ void MA_pace_frame(void) {
 
 	if (ma_audio_wrote_frame)
 		return; // this frame is already paced by the sound card
-	if (MA_present_blocked())
-		return; // ...or by the display (RA PACE_VSYNC)
 
 	static int64_t frame_index = -1;
 	static int64_t first_frame_start_time = 0;
