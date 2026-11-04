@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <assert.h>
+#include <string.h>
 
 #include <msettings.h>
 
@@ -845,6 +846,60 @@ void PLAT_getGPUSpeed() {
 
 	int speed = path ? getInt(path) : 0;
 	perf.gpu_speed = speed > 0 ? speed / 1000000 : 648; // MHz
+}
+
+// GPU utilisation, the "N%" of the HUD's GPU line.
+//
+// The sunxi debugfs node reports the share of time the GPU was busy since the
+// previous read ("Utilisation from last show:N%;"), i.e. an interval counter,
+// not an instantaneous value; its dvfs period is 100 ms.  Throttle to that
+// floor (a tighter read would cover a shorter window than the driver
+// accumulates, or read 0) and average 12 samples (~1.2 s) so the number is
+// steady between redraws -- the HUD calls this once per presented frame.
+// No other node exposes GPU load on this kernel: mali0/debugfs has only
+// ctx/gpu_memory/quirks and devfreq/gpu has no "load".
+//
+// Read with open/read, NOT getFile(): debugfs seq_files report st_size 0, so
+// getFile()'s fseek/ftell reads zero bytes and the value silently stays 0 --
+// which is exactly the bug this replaces.
+#define GPU_SAMPLES 12
+void PLAT_getGPUUsage() {
+	static uint64_t last_sample;
+	static double samples[GPU_SAMPLES];
+	static int count, index;
+	static int logged_unreadable;
+
+	uint64_t now = getMicroseconds();
+	if (last_sample && now - last_sample < 100000) return;
+	last_sample = now;
+
+	char buf[256];
+	int fd = open("/sys/kernel/debug/sunxi_gpu/dump", O_RDONLY);
+	if (fd < 0) {
+		if (!logged_unreadable) {
+			logged_unreadable = 1;
+			LOG_info("minarch: gpu usage: sunxi_gpu/dump unreadable (debugfs not mounted?), the HUD keeps 0\n");
+		}
+		return;
+	}
+	ssize_t n = read(fd, buf, sizeof(buf) - 1);
+	close(fd);
+	if (n <= 0) return;
+	buf[n] = '\0';
+
+	char* line = strstr(buf, "Utilisation");
+	if (!line) return;
+	char* colon = strchr(line, ':');
+	if (!colon) return;
+
+	double usage = atoi(colon + 1);
+	samples[index] = usage;
+	index = (index + 1) % GPU_SAMPLES;
+	if (count < GPU_SAMPLES) count++;
+
+	double sum = 0.0;
+	for (int i = 0; i < count; i++) sum += samples[i];
+	perf.gpu_usage = sum / count;
 }
 
 static struct WIFI_connection connection = {
