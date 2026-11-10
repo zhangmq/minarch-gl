@@ -262,6 +262,17 @@ void Special_render(void);
 // Libretro environment callback (defined in minarch.c)
 bool environment_callback(unsigned cmd, void *data);
 
+// RETRO_ENVIRONMENT_SET_FRAME_TIME_CALLBACK (21) and SET_AUDIO_CALLBACK (22).
+// Frame time is dispatched from the main loop right before retro_run(); async
+// audio runs its own pull thread (ma_audio.c), fed by MA_audio_async_tick().
+void MA_frame_time_register(const struct retro_frame_time_callback *cb);
+void MA_frame_time_tick(void);
+int  MA_audio_async_register(const struct retro_audio_callback *cb);
+void MA_audio_async_tick(void);
+void MA_audio_async_shutdown(void);
+// env 63 rebuild: stops/restarts the async pull thread around SND_resetAudio.
+void MA_audio_reinit(double sample_rate, double frame_rate);
+
 enum {
 	FE_OPT_SCALING,
 	FE_OPT_RESAMPLING,

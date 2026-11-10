@@ -478,6 +478,25 @@ size_t SND_batchSamples_fixed_rate(const SND_Frame* frames, size_t frame_count);
 // gives an emulator thread audio backpressure like RetroArch's blocking
 // audio write). Software cores keep dropping frames when full.
 void SND_setBlockOnFull(int enable);
+// Async audio (RETRO_ENVIRONMENT_SET_AUDIO_CALLBACK, env 22): its pull thread
+// needs to know whether the device exists yet, and whether the last pull made
+// the core write anything at all (a pull that wrote nothing is parked, like
+// RetroArch's audio thread; see ma_audio.c).
+int SND_isInitialized(void);
+unsigned SND_batchCount(void);
+// Declare the core an async-audio one (env 22): SND_init then sizes the ring
+// like a device buffer instead of the synchronous 8-frame jitter margin.
+void SND_setAsyncCore(int on);
+// Shrink an already-initialized ring to the async size (late registration);
+// must be called before the pull thread starts (see api.c).
+void SND_enableAsyncRing(void);
+// The frontend's default ring size in ms (no env 63 request applied).  RA's
+// SET_MINIMUM_AUDIO_LATENCY compares against the frontend's own default, not a
+// fixed number, so this is what a core's request has to be measured against.
+unsigned SND_defaultLatencyMs(void);
+// Teardown escape: make a producer blocked on a full ring return instead of
+// waiting for a drain that will not come (async-audio thread shutdown).
+void SND_abortBlockingWrite(int enable);
 void SND_quit(void);
 void SND_resetAudio(double sample_rate, double frame_rate);
 void SND_pauseAudio(bool paused);

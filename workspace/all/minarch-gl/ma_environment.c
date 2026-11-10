@@ -195,11 +195,14 @@ bool environment_callback(unsigned cmd, void *data) { // copied from picoarch in
 		break;
 	}
 	case RETRO_ENVIRONMENT_SET_FRAME_TIME_CALLBACK: { /* 21 */
-		// LOG_info("%i: RETRO_ENVIRONMENT_SET_FRAME_TIME_CALLBACK\n", cmd);
+		MA_frame_time_register((const struct retro_frame_time_callback *)data);
 		break;
 	}
 	case RETRO_ENVIRONMENT_SET_AUDIO_CALLBACK: { /* 22 */
-		// LOG_info("%i: RETRO_ENVIRONMENT_SET_AUDIO_CALLBACK\n", cmd);
+		/* Real support: the pull thread and set_state lifecycle live in
+		 * ma_audio.c.  data == NULL is the availability probe. */
+		if (!MA_audio_async_register((const struct retro_audio_callback *)data))
+			return false;
 		break;
 	}
 	case RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE: { /* 23 */
@@ -419,9 +422,13 @@ bool environment_callback(unsigned cmd, void *data) { // copied from picoarch in
 			LOG_info("minarch: minimum audio latency %u ms clamped to 512\n", req);
 			applied = 512;
 		}
-		/* The default ring is 8 frames of audio (api.c SND_init). */
+		/* RA compares the request against the frontend's own default, not a
+		 * fixed number (runloop.c:3249-3266).  Ours is 8 frames for a
+		 * synchronous core and the device-sized ring for an async one, so ask
+		 * the audio layer; fall back before it has initialized. */
 		double fps = core.fps > 0.0 ? core.fps : 60.0;
-		unsigned default_ms = (unsigned)(8000.0 / fps + 0.5);
+		unsigned default_ms = SND_defaultLatencyMs();
+		if (!default_ms) default_ms = (unsigned)(8000.0 / fps + 0.5);
 		unsigned target_ms = applied > default_ms ? applied : 0;
 		if (target_ms != core.audio_latency_current_ms) {
 			core.audio_latency_request_ms = req;
@@ -430,7 +437,8 @@ bool environment_callback(unsigned cmd, void *data) { // copied from picoarch in
 			LOG_info("minarch: minimum audio latency %u ms -> ring %s (%u ms default)\n",
 					req, target_ms ? "rebuilt for the requested latency" : "back to default",
 					default_ms);
-			SND_resetAudio(core.sample_rate, fps);
+			/* Stops the async pull thread around the rebuild. */
+			MA_audio_reinit(core.sample_rate, fps);
 		}
 		return true;
 	}

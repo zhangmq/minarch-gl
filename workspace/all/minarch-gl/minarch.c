@@ -322,6 +322,13 @@ int main(int argc , char* argv[]) {
 			if (loopprof_on < 0) loopprof_on = getenv("MINARCH_VIDEO_PROFILE") ? 1 : 0;
 			loopprof_t0 = loopprof_on ? loopprof_now() : 0;
 		}
+		/* env 21: hand the core the duration of the frame it is about to run
+		 * (RA calls it in core_run before retro_run, runloop.c:9807-9832).
+		 * env 22: liveness tick for the async-audio pull thread -- when this
+		 * stops (menu, sleep), the pull parks instead of rendering audio for
+		 * a game that is not advancing. */
+		MA_frame_time_tick();
+		MA_audio_async_tick();
 		run_frame();
 		{
 			if (loopprof_on) {

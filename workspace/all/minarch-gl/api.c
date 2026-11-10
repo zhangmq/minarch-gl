@@ -2668,6 +2668,26 @@ static unsigned snd_samples_pow2(unsigned rate, unsigned ms)
 #define ms SDL_GetTicks
 
 pthread_mutex_t audio_mutex = PTHREAD_MUTEX_INITIALIZER;
+// Counts every batch write, whatever the path (frame thread or the env-22
+// pull thread): the async-audio loop uses "did it move" as its progress
+// signal, exactly like RetroArch's audio thread parks when a callback
+// produced nothing (audio_thread_wrapper.c:49).
+static volatile unsigned snd_batch_calls;
+
+// Set while the async-audio pull thread is being torn down: a producer must
+// not be left waiting on a full ring that nobody will drain (core unload frees
+// the code that is blocked there).  Only the block-on-full path reads it.
+static volatile int snd_block_abort = 0;
+
+// Set when the core registered RETRO_ENVIRONMENT_SET_AUDIO_CALLBACK (env 22)
+// before SND_init: its ring is sized like a device buffer (2 periods) instead
+// of the synchronous path's 8-frame jitter margin.  RA's callback cores have
+// no front ring at all (audio_driver.c:4696-4710, !audio_cb_inited); a
+// device-sized ring is the closest a callback-drain backend can get, and it
+// bounds what one pull can absorb no matter how much the core writes
+// (libretro.h:1134: the amount is up to the core).
+static int snd_async_core = 0;
+static unsigned snd_device_period = 0; // spec_out.samples, for the async ring size
 // Signalled by the SDL audio callback after it drains frames, so a producer
 // can block on a full ring buffer (audio backpressure, like RetroArch's
 // blocking audio write). Every core takes this path (ma_audio.c sets
@@ -2935,6 +2955,8 @@ size_t SND_batchSamples(const SND_Frame *frames, size_t frame_count)
 	int total_consumed_frames = 0;
 	double ratio = 1.0;
 
+	__atomic_fetch_add(&snd_batch_calls, 1, __ATOMIC_RELAXED);
+
 	if (snd.frame_count <= 0)
 	{
 		snd.frame_count = 4096; // idk some random samples nr this should never hit tho, just to be safe
@@ -3053,6 +3075,8 @@ size_t SND_batchSamples(const SND_Frame *frames, size_t frame_count)
 			{
 				if (!snd.block_on_full)
 					break; // drop: non-hw-render path keeps old behavior
+				if (snd_block_abort)
+					break; // teardown: nobody will drain this ring
 				// Backpressure fix: the device may have been auto-paused by
 				// an earlier batch (the buffer_free > 99% branch pauses it
 				// while the ring was empty -- e.g. after a core execution
@@ -3113,6 +3137,8 @@ size_t SND_batchSamples_fixed_rate(const SND_Frame *frames, size_t frame_count)
 
 	int consumed = 0;
 	int total_consumed_frames = 0;
+
+	__atomic_fetch_add(&snd_batch_calls, 1, __ATOMIC_RELAXED);
 
 	// printf("received %d audio frames\n", frame_count);
 
@@ -3263,6 +3289,18 @@ void SND_init(double sample_rate, double frame_rate)
 	/* RA: device buffer from the latency setting (power of two for SDL) */
 	snd.latency_ms = snd_latency_ms();
 	snd.samples = snd_samples_pow2(spec_in.freq, snd.latency_ms);
+	if (snd_async_core) {
+		/* RA alignment, not a guess about the device: RA gives a callback
+		 * core no front ring at all -- the core writes inline into the device
+		 * buffer and blocks there (audio_driver.c:4696-4710).  Our SDL
+		 * backend can only hand samples to the device through a ring, so the
+		 * ring plays that buffer's role.  12 ms (1024 frames at 44.1 kHz)
+		 * keeps it at RA's scale while leaving one buffer of margin; the
+		 * ring below is then 2048 frames, i.e. the same total as one 2048
+		 * frame device period.  Nothing here is sized against a core's own
+		 * ring (libretro.h:1134). */
+		snd.samples = snd_samples_pow2(spec_in.freq, 12);
+	}
 	spec_in.samples = snd.samples;
 	spec_in.callback = SND_audioCallback;
 
@@ -3303,12 +3341,36 @@ void SND_init(double sample_rate, double frame_rate)
 		snd.frame_count = frames;
 		LOG_info("audio ring sized for %u ms: %u frames\n", latency_target_ms, frames);
 	}
+	else if (snd_async_core) {
+		/* Async-audio core (env 22): RA's callback cores write straight into
+		 * the device buffer and have no front ring at all
+		 * (audio_driver.c:4696-4710), so the ring plays the device's role.
+		 * One device period is the closest our SDL callback backend can get
+		 * and it is what bounds a single pull: it can never absorb more than
+		 * one device chunk, whatever amount the core writes (libretro.h:1134).
+		 * Two periods would be 4096 frames with this device's 2048-frame
+		 * buffer -- larger than a core's own ring, so it would not bound
+		 * anything. */
+		unsigned period = spec_out.samples
+				? (unsigned)spec_out.samples
+				: (unsigned)(spec_out.freq / SCREEN_FPS);
+		if (period < 2) period = (unsigned)(spec_out.freq / SCREEN_FPS);
+		/* Two device buffers (one playing, one filling) but never more than
+		 * 2048 frames: that is the RA-equivalent scale for a pulled core --
+		 * one device period's worth -- and it is a constant, not something
+		 * derived from a core's own ring (libretro.h:1134). */
+		snd.frame_count = period * 2;
+		if (snd.frame_count > 2048) snd.frame_count = 2048;
+		LOG_info("audio ring sized for async audio: %u frames (2x period, cap 2048)\n",
+				(unsigned)snd.frame_count);
+	}
 	else {
 		snd.frame_count = ((float)spec_out.freq / SCREEN_FPS) * 8; // buffer size based on sample rate out (times 8 frames of headroom)
 	}
 	perf.buffer_size = snd.frame_count;
 	snd.sample_rate_in = sample_rate;
 	snd.sample_rate_out = spec_out.freq;
+	snd_device_period = (unsigned)spec_out.samples;
 	perf.samplerate_in = snd.sample_rate_in;
 	perf.samplerate_out = snd.sample_rate_out;
 
@@ -3321,6 +3383,46 @@ void SND_init(double sample_rate, double frame_rate)
 			(unsigned)spec_out.samples);
 	snd.initialized = 1;
 
+}
+
+/* A core that registers env 22 after SND_init (rare; the protocol's usual
+ * place is retro_load_game) still needs the device-sized ring.  Callers must
+ * do this before starting the pull thread: the resize only locks the audio
+ * device, it does not take audio_mutex, so a concurrent writer would race the
+ * realloc. */
+unsigned SND_defaultLatencyMs(void)
+{
+	unsigned frames;
+	if (!snd.sample_rate_out) return 0;
+	if (snd_async_core) {
+		unsigned period = snd_device_period
+				? snd_device_period
+				: (unsigned)(snd.sample_rate_out / SCREEN_FPS);
+		frames = period * 2;
+		if (frames > 2048) frames = 2048;
+	}
+	else
+		frames = (unsigned)((double)snd.sample_rate_out / SCREEN_FPS * 8.0);
+	return (unsigned)ceil((double)frames * 1000.0 / (double)snd.sample_rate_out);
+}
+
+void SND_enableAsyncRing(void)
+{
+	if (!snd.initialized) return; /* SND_init will size from the flag */
+	/* An explicit env 63 request owns the ring size; the async default is
+	 * only the baseline a request is compared against. */
+	if (snd_latency_target_ms) return;
+	unsigned period = snd_device_period
+			? snd_device_period
+			: (unsigned)(snd.sample_rate_out / SCREEN_FPS);
+	unsigned want = period * 2; /* see SND_init */
+	if (want > 2048) want = 2048;
+	if (!want) return;
+	if (snd.frame_count <= want) return;
+	snd.frame_count = want;
+	SND_resizeBuffer();
+	perf.buffer_size = snd.frame_count;
+	LOG_info("audio ring shrunk for async audio: %u frames\n", (unsigned)snd.frame_count);
 }
 
 void SND_quit(void)
@@ -3419,6 +3521,26 @@ void SND_setBlockOnFull(int enable)
 	pthread_mutex_lock(&audio_mutex);
 	snd.block_on_full = enable ? 1 : 0;
 	pthread_mutex_unlock(&audio_mutex);
+}
+
+int SND_isInitialized(void)
+{
+	return snd.initialized ? 1 : 0;
+}
+
+void SND_setAsyncCore(int on)
+{
+	snd_async_core = on ? 1 : 0;
+}
+
+void SND_abortBlockingWrite(int enable)
+{
+	snd_block_abort = enable ? 1 : 0;
+}
+
+unsigned SND_batchCount(void)
+{
+	return __atomic_load_n(&snd_batch_calls, __ATOMIC_RELAXED);
 }
 
 FALLBACK_IMPLEMENTATION void PLAT_audioDeviceWatchRegister(void (*cb)(int, int)) {}

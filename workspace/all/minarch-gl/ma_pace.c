@@ -202,3 +202,57 @@ void MA_telemetry_tick(void) {
 	}
 }
 
+/* ---------------------------------------------------------------------------
+ * RETRO_ENVIRONMENT_SET_FRAME_TIME_CALLBACK (env 21).
+ *
+ * The frontend reports how long the frame it is about to run should take,
+ * right before retro_run().  RA's shape (runloop.c:9807-9832): real time is
+ * only a meaningful answer while the loop runs in real time, so every mode
+ * that breaks that relation reports the core's own reference duration
+ * instead -- fast forward, rewind, and a loop that was parked (menu, sleep,
+ * mode change) long enough that the wall-clock gap no longer describes one
+ * frame.  The protocol pairs this callback with async audio (env 22): a core
+ * that renders audio on its own clock still needs to know the video period.
+ */
+static struct retro_frame_time_callback frame_time;
+static int64_t frame_time_last_us;
+
+void MA_frame_time_register(const struct retro_frame_time_callback *cb) {
+	if (cb) frame_time = *cb;
+	else memset(&frame_time, 0, sizeof(frame_time));
+	frame_time_last_us = 0;
+	LOG_info("minarch: frame time callback %s (reference %lld us)\n",
+			frame_time.callback ? "registered" : "cleared",
+			(long long)frame_time.reference);
+}
+
+void MA_frame_time_tick(void) {
+	if (!frame_time.callback) return;
+
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	int64_t now_us = (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+
+	double fps = core.fps > 0.0 ? core.fps : 60.0;
+	int64_t frame_us = (int64_t)(1000000.0 / fps);
+	int locked = fast_forward || rewinding;
+
+	int64_t delta;
+	if (locked) {
+		delta = (int64_t)frame_time.reference;
+		frame_time_last_us = 0;
+	}
+	else if (frame_time_last_us == 0
+			|| now_us - frame_time_last_us > frame_us * 3 + 20000) {
+		/* First frame, or the loop was parked for far longer than a frame
+		 * (menu, sleep): report one reference frame, not the parked gap. */
+		delta = (int64_t)frame_time.reference;
+		frame_time_last_us = now_us;
+	}
+	else {
+		delta = now_us - frame_time_last_us;
+		frame_time_last_us = now_us;
+	}
+
+	frame_time.callback(delta);
+}

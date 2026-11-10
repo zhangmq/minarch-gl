@@ -473,6 +473,10 @@ void Core_unload(void) {
 }
 void Core_quit(void) {
 	if (core.initialized) {
+		/* Stop the env-22 pull thread before the core's code goes away: it
+		 * calls back into unload_game/deinit's owner.  No-op unless the core
+		 * registered an async audio callback. */
+		MA_audio_async_shutdown();
 		SRAM_write();
 		Cheats_free();
 		RTC_write();
