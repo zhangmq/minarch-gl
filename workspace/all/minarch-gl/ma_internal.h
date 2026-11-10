@@ -164,6 +164,7 @@ extern int cfg_screenx;
 extern int cfg_screeny;
 extern int overlay;
 extern int sync_ref;
+extern int frame_pacing; // 0 = Classic (frame timer + drop), 1 = Audio (blocking write)
 extern int max_ff_speed;
 extern int overclock;
 
@@ -264,6 +265,7 @@ bool environment_callback(unsigned cmd, void *data);
 enum {
 	FE_OPT_SCALING,
 	FE_OPT_RESAMPLING,
+	FE_OPT_FRAME_PACING,
 	FE_OPT_AMBIENT,
 	FE_OPT_EFFECT,
 	FE_OPT_OVERLAY,

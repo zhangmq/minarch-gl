@@ -63,16 +63,19 @@ size_t audio_sample_batch_callback(const int16_t *data, size_t frames) {
 		audprof_on = getenv("MINARCH_VIDEO_PROFILE") ? 1 : 0;
 	uint64_t ap_t0 = audprof_on ? audprof_now() : 0;
 	if (rewinding && !rewind_ctx.audio) return frames;
-	// The sound card is the one real-time master clock for EVERY core, so the
-	// write blocks on a full ring buffer (RA RUNLOOP_PACE_AUDIO / blocking
-	// write convention): the producer is held to the drain rate the user
-	// actually hears. pace_frame() (minarch.c) then adds no timer on top.
-	//
-	// This used to be hw-render only: software cores dropped frames instead
-	// (SND_setBlockOnFull(false) -> api.c break-on-full), which left them
-	// paced by whatever the display/sleep path happened to do. One clock,
-	// both families.
-	SND_setBlockOnFull(true);
+	// Frame pacing source (Frontend > Frame Pacing):
+	//   Audio   -- the write blocks on a full ring buffer (RA's blocking-write
+	//              convention): the producer is held to the drain rate the user
+	//              actually hears, and pace_frame() adds no timer on top.
+	//   Classic -- upstream minarch's model: the write drops the samples that
+	//              do not fit (api.c break-on-full; its 60%/99% pause
+	//              thresholds stay active) and pace_frame()'s timer sets the
+	//              rate.
+	// Config_syncFrontend pushes the same value into SND_setBlockOnFull the
+	// moment the menu changes it, so a writer already blocked on a full ring
+	// exits at the audio callback's next broadcast. Re-applying it per batch
+	// keeps the two in step after an audio re-init (SND_resetAudio).
+	SND_setBlockOnFull(frame_pacing == 1);
 	if (!fast_forward || ff_audio) {
 		size_t written;
 		if (use_core_fps || fast_forward) {
@@ -88,11 +91,12 @@ size_t audio_sample_batch_callback(const int16_t *data, size_t frames) {
 			written = SND_batchSamples_fixed_rate((const SND_Frame*)data, frames);
 		}
 		else {
-			/* Blocking write: this frame is held to the sound card's drain
-			 * rate, so pace_frame must not add a second, independent sleep
-			 * on top of it (RA pace bits). */
+			/* SND_batchSamples: blocks when the pacing is Audio, drops when it
+			 * is Classic. Only the blocking case holds this frame to the
+			 * sound card, so only then may pace_frame skip its timer. */
 			written = SND_batchSamples((const SND_Frame*)data, frames);
-			ma_audio_wrote_frame = 1;
+			if (frame_pacing == 1)
+				ma_audio_wrote_frame = 1;
 		}
 		if (audprof_on) {
 			uint64_t t = audprof_now();

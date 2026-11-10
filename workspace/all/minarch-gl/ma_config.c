@@ -9,6 +9,19 @@
 #include "ma_config.h"
 #include "ma_preset.h"
 
+/* Frame pacing source (Frontend > Frame Pacing, FE_OPT_FRAME_PACING).
+ *   0 Classic -- minarch's own model: the frame timer sets the rate, and the
+ *               audio write drops the samples that do not fit (api.c,
+ *               SND_batchSamples break-on-full; the 60%/99% pause thresholds
+ *               stay active).
+ *   1 Audio   -- RetroArch's model: the audio write blocks on a full ring, so
+ *               the sound device's drain rate sets the rate and MA_pace_frame()
+ *               adds no timer on top (api.c block_on_full + ma_audio.c).
+ * It is a normal frontend option (key `minarch_frame_pacing`), so a core pak's
+ * default.cfg presets it per core and the in-game menu overrides it; the value
+ * written is the label text (Classic / Audio). */
+int frame_pacing = 0;
+
 static ButtonMapping button_label_mapping[] = { // used to lookup the retro_id and local btn_id from button name
 	{"NONE",	-1,								BTN_ID_NONE},
 	{"UP",		RETRO_DEVICE_ID_JOYPAD_UP,		BTN_ID_DPAD_UP},
@@ -81,6 +94,18 @@ void Config_syncFrontend(char* key, int value) {
 		resampling_quality = value;
 		SND_setQuality(resampling_quality);
 		i = FE_OPT_RESAMPLING;
+	}
+	else if (exactMatch(key,config.frontend.options[FE_OPT_FRAME_PACING].key)) {
+		/* Push it to the audio API as well: a writer already blocked on a
+		 * full ring re-reads snd.block_on_full inside its wait loop, and the
+		 * audio callback's broadcast is what wakes it, so the switch lands
+		 * within one audio period. No restart, no context work. ma_audio.c
+		 * re-applies the same value on every batch, which keeps the two in
+		 * step after an audio re-init (SND_resetAudio). */
+		frame_pacing = value;
+		SND_setBlockOnFull(value == 1);
+		LOG_info("minarch: frame pacing -> %s\n", value ? "Audio" : "Classic");
+		i = FE_OPT_FRAME_PACING;
 	}
 	else if (exactMatch(key,config.frontend.options[FE_OPT_AMBIENT].key)) {
 		ambient_mode = value;
@@ -1080,6 +1105,13 @@ char* sync_ref_labels[] = {
 	"Native",
 	NULL
 };
+/* Index order is the menu cycle order and the text written to the cfg:
+ * 0 = Classic (compiled default), 1 = Audio. */
+char* frame_pacing_labels[] = {
+	"Classic",
+	"Audio",
+	NULL
+};
 static char* max_ff_labels[] = {
 	"None",
 	"2x",
@@ -1417,6 +1449,16 @@ struct Config config = {
 				.count = 4,
 				.values = resample_labels,
 				.labels = resample_labels,
+			},
+			[FE_OPT_FRAME_PACING] = {
+				.key	= "minarch_frame_pacing",
+				.name	= "Frame Pacing",
+				.desc	= "Audio: the loop waits for the audio\ndevice, so audio playback speed sets\nthe frame rate (RetroArch).\nClassic: a fixed frame timer sets the\nframe rate and late audio is dropped\n(original minarch).",
+				.default_value = 0,
+				.value = 0,
+				.count = 2,
+				.values = frame_pacing_labels,
+				.labels = frame_pacing_labels,
 			},
 			[FE_OPT_AMBIENT] = {
 				.key	= "minarch_ambient", 
