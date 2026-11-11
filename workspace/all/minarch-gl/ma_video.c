@@ -372,156 +372,150 @@ static const char* bitmap_font[] = {
 		"1   1",
 };
 
-void drawRect(int x, int y, int w, int h, uint32_t c, uint32_t *data, int stride) {
-	for (int _x = x; _x < x + w; _x++) {
-		data[_x + y * stride] = c;
-		data[_x + (y + h - 1) * stride] = c;
-	}
-	for (int _y = y; _y < y + h; _y++) {
-		data[x + _y * stride] = c;
-		data[x + w - 1 + _y * stride] = c;
-	}
+/* ---------------------------------------------------------------------------
+ * Debug HUD: layout only.
+ *
+ * Every coordinate here is in DEVICE pixels.  The old rasterizer drew into a
+ * half-resolution surface that the composite stage upscaled 2x, so both the
+ * positions and each glyph pixel are scaled by HUD_SCALE; the GPU renderer
+ * (generic_video.c) reproduces exactly that with quads from the font atlas.
+ * ------------------------------------------------------------------------ */
+#define HUD_GLYPH_W 5
+#define HUD_GLYPH_H 9
+#define HUD_CELL_W  6   /* 5 px glyph + 1 px letter spacing */
+#define HUD_SCALE   2   /* the old half-resolution surface, doubled */
+
+const char *MA_HUD_glyph(unsigned char c) {
+	/* Upstream indexed bitmap_font with any byte of the text, but the array is
+	 * only sized by its highest designator ('N'); anything past that was an
+	 * out-of-bounds read that happened to be zero.  Treat those as space. */
+	if (c >= sizeof(bitmap_font) / sizeof(bitmap_font[0])) c = ' ';
+	const char *g = bitmap_font[c];
+	return g ? g : bitmap_font[' '];
 }
 
-void fillRect(int x, int y, int w, int h, uint32_t c, uint32_t *data, int stride) {
-	for (int _y = y; _y < y + h; _y++) {
-		for (int _x = x; _x < x + w; _x++) {
-			data[_x + _y * stride] = c;
-		}
+static void hud_text_item(MA_HudItem *items, int *n, int max, char *text,
+		int ax, int ay, int dev_w, int dev_h) {
+	int len = (int)strlen(text);
+	if (len <= 0 || *n >= max) return;
+
+	int w = (HUD_CELL_W * len - 1) * HUD_SCALE;
+	int h = HUD_GLYPH_H * HUD_SCALE;
+	/* The old rasterizer read a negative anchor as "align to that edge":
+	 * ox = width - w + ox, oy = height - h + oy. */
+	int x = ax < 0 ? dev_w - w + ax : ax;
+	int y = ay < 0 ? dev_h - h + ay : ay;
+	if (x < 0) x = 0;
+	if (y < 0) y = 0;
+
+	MA_HudItem *it = &items[(*n)++];
+	it->x = x;
+	it->y = y;
+	it->w = w;
+	it->h = h;
+	it->argb = 0xFFFFFFFFu;
+	it->grad = 0.0f;
+	it->text = text;
+}
+
+static void hud_rect_item(MA_HudItem *items, int *n, int max,
+		int x, int y, int w, int h, uint32_t argb, float grad) {
+	if (w <= 0 || h <= 0 || *n >= max) return;
+	MA_HudItem *it = &items[(*n)++];
+	it->x = x;
+	it->y = y;
+	it->w = w;
+	it->h = h;
+	it->argb = argb;
+	it->grad = grad;
+	it->text = NULL;
+}
+
+int MA_HUD_layout(MA_HudItem *items, int max, int dev_w, int dev_h) {
+	if (!show_debug || SDL_GetTicks() <= 5000) return 0;
+	if (isnan(perf.ratio) || isnan(perf.fps) || isnan(perf.req_fps)
+			|| isnan(perf.buffer_ms)) return 0;
+	if (perf.buffer_size < 0 || perf.buffer_free < 0) return 0;
+
+	static char line[8][250];
+	int n = 0;
+	int x = (2 + renderer.src_x) * HUD_SCALE;
+	int y = (2 + renderer.src_y) * HUD_SCALE;
+	int step = 14 * HUD_SCALE;
+	int scale = renderer.scale;
+	if (scale == -1) scale = 1; /* nearest neighbor flag */
+
+	snprintf(line[0], sizeof(line[0]), "%ix%i %ix %i/%i",
+			renderer.src_w, renderer.src_h, scale,
+			perf.samplerate_in, perf.samplerate_out);
+	hud_text_item(items, &n, max, line[0], x, y, dev_w, dev_h);
+
+	snprintf(line[1], sizeof(line[1]), "%.03f/%i/%.0f/%i/%i/%i",
+			perf.ratio, perf.buffer_size, perf.buffer_ms, perf.buffer_free,
+			perf.buffer_target, perf.avg_buffer_free);
+	hud_text_item(items, &n, max, line[1], x, y + step, dev_w, dev_h);
+
+	snprintf(line[2], sizeof(line[2]), "%i,%i %ix%i",
+			renderer.dst_x, renderer.dst_y,
+			renderer.src_w * scale, renderer.src_h * scale);
+	hud_text_item(items, &n, max, line[2], -x, y, dev_w, dev_h);
+
+	snprintf(line[3], sizeof(line[3]), "%ix%i,%i",
+			renderer.dst_w, renderer.dst_h,
+			fmt == RETRO_PIXEL_FORMAT_XRGB8888 ? 8888 : 565);
+	hud_text_item(items, &n, max, line[3], -x, -y, dev_w, dev_h);
+
+	/* Frame timing stats */
+	snprintf(line[4], sizeof(line[4]), "%.1f/%.1f A:%.1f M:%.1f D:%d",
+			perf.fps, perf.req_fps, perf.avg_frame_ms, perf.max_frame_ms,
+			perf.frame_drops);
+	hud_text_item(items, &n, max, line[4], x, -y, dev_w, dev_h);
+
+	/* CPU stats */
+	PLAT_getCPUSpeed();
+	PLAT_getCPUTemp();
+	snprintf(line[5], sizeof(line[5]), "%.0f%%/%ihz/%ic",
+			perf.cpu_usage, perf.cpu_speed, perf.cpu_temp);
+	hud_text_item(items, &n, max, line[5], x, -y - step, dev_w, dev_h);
+
+	/* GPU stats */
+	PLAT_getGPUUsage();
+	PLAT_getGPUSpeed();
+	PLAT_getGPUTemp();
+	snprintf(line[6], sizeof(line[6]), "%.0f%%/%ihz/%ic",
+			perf.gpu_usage, perf.gpu_speed, perf.gpu_temp);
+	hud_text_item(items, &n, max, line[6], x, -y - 2 * step, dev_w, dev_h);
+
+	if (currentshaderpass > 0) {
+		snprintf(line[7], sizeof(line[7]), "%i/%ix%i/%ix%i/%ix%i",
+				currentshaderpass, currentshadersrcw, currentshadersrch,
+				currentshadertexw, currentshadertexh,
+				currentshaderdstw, currentshaderdsth);
+		hud_text_item(items, &n, max, line[7], x, -y - 3 * step, dev_w, dev_h);
 	}
-}
 
-static void blitBitmapText(char* text, int ox, int oy, uint32_t* data, int stride, int width, int height) {
-	#define DEBUG_CHAR_WIDTH 5
-	#define DEBUG_CHAR_HEIGHT 9
-	#define LETTERSPACING 1
+	/* Audio buffer gauge: black background, the filled part (colour sampled
+	 * from the atlas gradient at `fill`, exactly drawGauge's maths), then a
+	 * 1 px outline (2 px at this scale). */
+	double fill = (double)(perf.buffer_size - perf.buffer_free)
+			/ (double)perf.buffer_size;
+	if (fill < 0.0) fill = 0.0;
+	if (fill > 1.0) fill = 1.0;
+	int gx = x;
+	int gy = y + 30 * HUD_SCALE;
+	int gw = dev_w / 2;
+	int gh = 8 * HUD_SCALE;
+	hud_rect_item(items, &n, max, gx, gy, gw, gh, 0xFF000000u, 0.0f);
+	int filled = (int)(fill * (double)gw);
+	if (filled > 0)
+		hud_rect_item(items, &n, max, gx, gy, filled, gh, 0, (float)fill);
+	int b = HUD_SCALE;
+	hud_rect_item(items, &n, max, gx, gy, gw, b, 0xFFFFFFFFu, 0.0f);
+	hud_rect_item(items, &n, max, gx, gy + gh - b, gw, b, 0xFFFFFFFFu, 0.0f);
+	hud_rect_item(items, &n, max, gx, gy, b, gh, 0xFFFFFFFFu, 0.0f);
+	hud_rect_item(items, &n, max, gx + gw - b, gy, b, gh, 0xFFFFFFFFu, 0.0f);
 
-	int len = strlen(text);
-	int w = ((DEBUG_CHAR_WIDTH + LETTERSPACING) * len) - 1;
-	int h = DEBUG_CHAR_HEIGHT;
-
-	if (ox < 0) ox = width - w + ox;
-	if (oy < 0) oy = height - h + oy;
-
-	if (ox < 0) ox = 0;
-	if (oy < 0) oy = 0;
-
-	// Clamp to screen bounds (optional but recommended)
-	if (ox + w > width) w = width - ox;
-	if (oy + h > height) h = height - oy;
-
-	if (w <= 0 || h <= 0) return;
-
-	// Draw background rectangle (black ARGB8888)
-	fillRect(ox, oy, w, h, 0xFF000000, data, stride);
-
-	data += oy * stride + ox;
-
-	for (int y = 0; y < h; y++) {
-		// uint32_t* row = data + y * stride;
-		int current_x = 0;
-		for (int i = 0; i < len; i++) {
-			const char* c = bitmap_font[(unsigned char)text[i]];
-			if (!c) c = bitmap_font[' '];
-			for (int x = 0; x < DEBUG_CHAR_WIDTH; x++) {
-				if (current_x >= w) break;
-
-				if (c[y * DEBUG_CHAR_WIDTH + x] == '1') {
-					data[y * stride + current_x] = 0xFFFFFFFF;  // white ARGBB8888
-				}
-				current_x++;
-			}
-			if (current_x >= w) break;
-			current_x += LETTERSPACING;
-		}
-	}
-}
-
-void drawGauge(int x, int y, float percent, int width, int height, uint32_t *data, int stride) {
-	// Clamp percent to 0.0 - 1.0
-	if (percent < 0.0f) percent = 0.0f;
-	if (percent > 1.0f) percent = 1.0f;
-
-	uint8_t red   = (uint8_t)(percent * 255.0f);
-	uint8_t green = (uint8_t)((1.0f - percent) * 255.0f);
-	uint8_t blue  = 0;
-	uint8_t alpha = 255;
-
-	uint32_t fillColor = (red << 24) | (green << 16) | (blue << 8) | alpha;
-	uint32_t borderColor = 0xFFFFFFFF;  // White ARGB
-	uint32_t bgColor = 0xFF000000;      // Black ARGB
-
-	// Background
-	fillRect(x, y, width, height, bgColor, data, stride);
-
-	// Filled portion
-	int filledWidth = (int)(percent * width);
-	fillRect(x, y, filledWidth, height, fillColor, data, stride);
-
-	// Outline
-	drawRect(x, y, width, height, borderColor, data, stride);
-}
-
-static void drawDebugHud(const void* data, unsigned width, unsigned height, size_t pitch, enum retro_pixel_format fmt)
-{
-	if (show_debug && !isnan(perf.ratio) && !isnan(perf.fps) && !isnan(perf.req_fps)  && !isnan(perf.buffer_ms) &&
-		perf.buffer_size >= 0  && perf.buffer_free >= 0 && SDL_GetTicks() > 5000) {
-		int x = 2 + renderer.src_x;
-		int y = 2 + renderer.src_y;
-		char debug_text[250];
-		int scale = renderer.scale;
-		if (scale==-1) scale = 1; // nearest neighbor flag
-
-		sprintf(debug_text, "%ix%i %ix %i/%i", renderer.src_w,renderer.src_h, scale,perf.samplerate_in,perf.samplerate_out);
-		blitBitmapText(debug_text,x,y,(uint32_t*)data,pitch / 4, width,height);
-		
-		sprintf(debug_text, "%.03f/%i/%.0f/%i/%i/%i", perf.ratio,
-				perf.buffer_size,perf.buffer_ms, perf.buffer_free, perf.buffer_target,perf.avg_buffer_free);
-		blitBitmapText(debug_text, x, y + 14, (uint32_t*)data, pitch / 4, width,
-					height);
-
-		sprintf(debug_text, "%i,%i %ix%i", renderer.dst_x,renderer.dst_y, renderer.src_w*scale,renderer.src_h*scale);
-		blitBitmapText(debug_text,-x,y,(uint32_t*)data,pitch / 4, width,height);
-	
-		sprintf(debug_text, "%ix%i,%i", renderer.dst_w,renderer.dst_h, fmt == RETRO_PIXEL_FORMAT_XRGB8888 ? 8888 : 565);
-		blitBitmapText(debug_text,-x,-y,(uint32_t*)data,pitch / 4, width,height);
-
-		// Frame timing stats
-		sprintf(debug_text, "%.1f/%.1f A:%.1f M:%.1f D:%d", perf.fps, perf.req_fps, perf.avg_frame_ms, perf.max_frame_ms, perf.frame_drops);
-		blitBitmapText(debug_text,x,-y,(uint32_t*)data,pitch / 4, width,height);
-		
-		// CPU stats
-		PLAT_getCPUSpeed();
-		PLAT_getCPUTemp();
-		sprintf(debug_text, "%.0f%%/%ihz/%ic", perf.cpu_usage, perf.cpu_speed, perf.cpu_temp);
-		blitBitmapText(debug_text,x,-y - 14,(uint32_t*)data,pitch / 4, width,height);
-		
-		// GPU stats
-		PLAT_getGPUUsage();
-		PLAT_getGPUSpeed();
-		PLAT_getGPUTemp();
-		sprintf(debug_text, "%.0f%%/%ihz/%ic", perf.gpu_usage, perf.gpu_speed, perf.gpu_temp);
-		blitBitmapText(debug_text,x,-y - 28,(uint32_t*)data,pitch / 4, width,height);
-
-		if(currentshaderpass>0) {
-			sprintf(debug_text, "%i/%ix%i/%ix%i/%ix%i", currentshaderpass, currentshadersrcw,currentshadersrch,currentshadertexw,currentshadertexh,currentshaderdstw,currentshaderdsth);
-			blitBitmapText(debug_text,x,-y - 42,(uint32_t*)data,pitch / 4, width,height);
-		}
-	
-		double buffer_fill = (double) (perf.buffer_size - perf.buffer_free) / (double) perf.buffer_size;
-		drawGauge(x, y + 30, buffer_fill, width / 2, 8, (uint32_t*)data, pitch / 4);
-	}
-}
-
-// Exported entry for the shared overlay stage (generic_video.c
-// PLAT_composite_overlays), which rasterizes this same HUD onto a frontend
-// surface for BOTH present paths -- the software path no longer stamps it into
-// the core frame, so there is exactly one HUD implementation and one
-// composition point.  drawDebugHud still owns the "show_debug + 5s warm-up"
-// gate; PLAT_debug_hud_active lets the composite stage skip the upload and the
-// quad entirely while the HUD is off.
-void PLAT_draw_debug_hud(const void* data, unsigned width, unsigned height, size_t pitch, enum retro_pixel_format fmt) {
-	drawDebugHud(data, width, height, pitch, fmt);
+	return n;
 }
 
 int PLAT_debug_hud_active(void) {

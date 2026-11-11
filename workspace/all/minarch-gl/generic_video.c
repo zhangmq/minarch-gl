@@ -1376,14 +1376,269 @@ static int effect_w = 0, effect_h = 0;
 static GLuint overlay_tex = 0;
 static int overlay_w = 0, overlay_h = 0;
 
-// Debug HUD layer: one surface + one texture for BOTH present paths, filled by
-// the single rasterizer in ma_video.c (PLAT_draw_debug_hud -> drawDebugHud) and
-// composited by PLAT_composite_overlays below.  Half device resolution on a
-// fullscreen quad, so the text keeps upstream's apparent size.
-static uint32_t *dbg_hud_pixels = NULL;
-static int dbg_hud_w = 0, dbg_hud_h = 0;
-static GLuint dbg_hud_tex = 0;
-static int dbg_hud_tex_sized = 0;
+// ---------------------------------------------------------------------------
+// Debug HUD: font atlas + one quad batch, for BOTH present paths.
+//
+// ma_video.c owns the 5x9 font and produces a draw list in device pixels; this
+// only bakes the font into one RGBA texture (plus a gauge gradient row and two
+// solid texels) at startup and, per frame, uploads a small vertex array and
+// draws it with the already-loaded overlay program.  There is no per-frame
+// surface, memset or texture upload any more.
+// ---------------------------------------------------------------------------
+#define HUD_ATLAS_COLS 16
+#define HUD_ATLAS_ROWS 8
+#define HUD_CELL_W     6   /* 5 px glyph + 1 px spacing, matches ma_video.c */
+#define HUD_CELL_H     10
+#define HUD_GLYPH_W    5
+#define HUD_GLYPH_H    9
+#define HUD_DRAW_SCALE 2   /* device pixels per font pixel (ma_video HUD_SCALE) */
+/* Each font pixel is stored as a HUD_DRAW_SCALE x HUD_DRAW_SCALE block, so the
+ * glyph quad samples the atlas 1:1 (a device pixel centre lands on a texel
+ * centre, half a texel of margin) instead of stretching 5 texels over 10 px
+ * with only a quarter-texel margin.  overlay.glsl interpolates its varyings at
+ * mediump (the h700 copy declares "precision mediump float"), and that quarter
+ * of a texel was close enough to a texel edge that some glyphs lost their
+ * left-hand stroke column -- exactly the columns with ink (0,2-9,A-D,H,J,M,N,
+ * c,h,m,x,z). */
+#define HUD_TEX_SCALE  HUD_DRAW_SCALE
+#define HUD_TEX_CELL_W (HUD_CELL_W * HUD_TEX_SCALE)    /* 12 */
+#define HUD_TEX_CELL_H (HUD_CELL_H * HUD_TEX_SCALE)    /* 20 */
+#define HUD_TEX_GLYPH_W (HUD_GLYPH_W * HUD_TEX_SCALE)  /* 10 */
+#define HUD_TEX_GLYPH_H (HUD_GLYPH_H * HUD_TEX_SCALE)  /* 18 */
+#define HUD_GRID_W     (HUD_ATLAS_COLS * HUD_TEX_CELL_W)   /* 192 */
+#define HUD_GRID_H     (HUD_ATLAS_ROWS * HUD_TEX_CELL_H)   /* 160 */
+#define HUD_GRAD_W     256
+/* gradient row, then the solid white and black texels */
+#define HUD_ATLAS_W    (HUD_GRAD_W + 2)
+#define HUD_ATLAS_H    (HUD_GRID_H + 1)
+
+typedef struct { float x, y, u, v; } HudVert;
+
+static GLuint hud_atlas_tex = 0;
+static GLuint hud_vbo = 0;
+/* Cached per program handle: a shader reload replaces the program, and the
+ * attribute indices are only valid for the one they were queried from. */
+static GLuint hud_prog = 0;
+static int hud_pos_loc = -1, hud_tex_loc = -1;
+
+static void hud_atlas_build(void) {
+	uint8_t *px = calloc((size_t)HUD_ATLAS_W * HUD_ATLAS_H, 4);
+	if (!px) return;
+
+	for (int c = 0; c < HUD_ATLAS_COLS * HUD_ATLAS_ROWS; c++) {
+		const char *g = MA_HUD_glyph((unsigned char)c);
+		if (!g) continue;
+		int cx = (c % HUD_ATLAS_COLS) * HUD_TEX_CELL_W;
+		int cy = (c / HUD_ATLAS_COLS) * HUD_TEX_CELL_H;
+		for (int y = 0; y < HUD_GLYPH_H; y++) {
+			for (int x = 0; x < HUD_GLYPH_W; x++) {
+				if (g[y * HUD_GLYPH_W + x] != '1') continue;
+				for (int sy = 0; sy < HUD_TEX_SCALE; sy++) {
+					for (int sx = 0; sx < HUD_TEX_SCALE; sx++) {
+						uint8_t *q = px + (((size_t)(cy + y * HUD_TEX_SCALE + sy)
+								* HUD_ATLAS_W)
+								+ (cx + x * HUD_TEX_SCALE + sx)) * 4;
+						q[0] = q[1] = q[2] = q[3] = 255;
+					}
+				}
+			}
+		}
+	}
+
+	/* Gauge gradient: reproduce what the old drawGauge() actually showed, not
+	 * its arithmetic.  It packed fillColor = (red<<24)|(green<<16)|(blue<<8)|alpha
+	 * with red = p*255, green = (1-p)*255, blue = 0, alpha = 255 and uploaded
+	 * the surface as RGBA, so the texture ended up as
+	 *     R = 255, G = 0, B = (1-p)*255, A = p*255
+	 * -- a pink/magenta bar whose opacity follows the fill.  Storing the
+	 * literal (255p, 255(1-p), 0, 255) instead turned it olive-green. */
+	for (int x = 0; x < HUD_GRAD_W; x++) {
+		uint8_t *q = px + (((size_t)HUD_GRID_H * HUD_ATLAS_W) + x) * 4;
+		q[0] = 255;                    /* R */
+		q[1] = 0;                      /* G */
+		q[2] = (uint8_t)(255 - x);     /* B follows 1-p */
+		q[3] = (uint8_t)x;             /* A follows p */
+	}
+	uint8_t *white = px + (((size_t)HUD_GRID_H * HUD_ATLAS_W) + HUD_GRAD_W) * 4;
+	white[0] = white[1] = white[2] = white[3] = 255;
+	uint8_t *black = px + (((size_t)HUD_GRID_H * HUD_ATLAS_W) + HUD_GRAD_W + 1) * 4;
+	black[0] = black[1] = black[2] = 0;
+	black[3] = 255;
+
+	glGenTextures(1, &hud_atlas_tex);
+	if (!hud_atlas_tex) { free(px); return; }
+	glBindTexture(GL_TEXTURE_2D, hud_atlas_tex);
+	PLAT_gl_unpack_reset();
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, HUD_ATLAS_W, HUD_ATLAS_H, 0,
+			GL_RGBA, GL_UNSIGNED_BYTE, px);
+	free(px);
+}
+
+/* Atlas pixel rect -> UVs.  The overlay program samples (u, 1-v), and GL's t=0
+ * is the first uploaded row, so a row `ay` of the memory image needs
+ * v = 1 - ay / H. */
+/* Solid quads must sample a texel CENTRE, not span its edges: a one-texel
+ * range sits exactly on the texel boundary, and overlay.glsl interpolates its
+ * varyings at mediump, so the edge column could sample the neighbouring texel
+ * -- a black backdrop picked up the white texel next to it and drew a white
+ * bar down the left edge of every text run. */
+static void hud_solid_uv(int ax, int ay, float *u, float *v) {
+	*u = ((float)ax + 0.5f) / (float)HUD_ATLAS_W;
+	*v = 1.0f - ((float)ay + 0.5f) / (float)HUD_ATLAS_H;
+}
+
+static void hud_uv(int ax, int ay, int aw, int ah,
+		float *u0, float *v0, float *u1, float *v1) {
+	*u0 = (float)ax / (float)HUD_ATLAS_W;
+	*u1 = (float)(ax + aw) / (float)HUD_ATLAS_W;
+	*v0 = 1.0f - (float)ay / (float)HUD_ATLAS_H;
+	*v1 = 1.0f - (float)(ay + ah) / (float)HUD_ATLAS_H;
+}
+
+static void hud_quad(HudVert *v, int dev_w, int dev_h,
+		float x, float y, float w, float h,
+		float u0, float v0, float u1, float v1) {
+	float x0 = 2.0f * x / (float)dev_w - 1.0f;
+	float x1 = 2.0f * (x + w) / (float)dev_w - 1.0f;
+	float y0 = 1.0f - 2.0f * y / (float)dev_h;
+	float y1 = 1.0f - 2.0f * (y + h) / (float)dev_h;
+	v[0] = (HudVert){ x0, y0, u0, v0 };
+	v[1] = (HudVert){ x0, y1, u0, v1 };
+	v[2] = (HudVert){ x1, y1, u1, v1 };
+	v[3] = (HudVert){ x0, y0, u0, v0 };
+	v[4] = (HudVert){ x1, y1, u1, v1 };
+	v[5] = (HudVert){ x1, y0, u1, v0 };
+}
+
+static void hud_render(int dev_w, int dev_h) {
+	MA_HudItem items[16];
+	int n = MA_HUD_layout(items, 16, dev_w, dev_h);
+	if (n <= 0) return;
+	if (!hud_atlas_tex) hud_atlas_build();
+	if (!hud_atlas_tex) return;
+	if (!s_shader_overlay.shader_p) return;
+
+	if (hud_prog != s_shader_overlay.shader_p) {
+		hud_prog = s_shader_overlay.shader_p;
+		hud_pos_loc = glGetAttribLocation(hud_prog, "VertexCoord");
+		hud_tex_loc = glGetAttribLocation(hud_prog, "TexCoord");
+	}
+	if (hud_pos_loc < 0 || hud_tex_loc < 0) return;
+
+	size_t need = 0;
+	for (int i = 0; i < n; i++)
+		need += (items[i].text ? 1 + strlen(items[i].text) : 1) * 6;
+
+	static HudVert *verts = NULL;
+	static size_t verts_cap = 0;
+	if (need > verts_cap) {
+		HudVert *grown = realloc(verts, need * sizeof(HudVert));
+		if (!grown) return;
+		verts = grown;
+		verts_cap = need;
+	}
+
+	size_t count = 0;
+	for (int i = 0; i < n; i++) {
+		MA_HudItem *it = &items[i];
+		float u0, v0, u1, v1;
+
+		if (it->text) {
+			/* The old rasterizer filled a black box behind every run. */
+			hud_solid_uv(HUD_GRAD_W + 1, HUD_GRID_H, &u0, &v0);
+			hud_quad(&verts[count], dev_w, dev_h, (float)it->x, (float)it->y,
+					(float)it->w, (float)it->h, u0, v0, u0, v0);
+			count += 6;
+
+			for (int c = 0; it->text[c]; c++) {
+				unsigned char ch = (unsigned char)it->text[c];
+				if (ch == ' ' || ch >= HUD_ATLAS_COLS * HUD_ATLAS_ROWS) continue;
+				int cx = (ch % HUD_ATLAS_COLS) * HUD_TEX_CELL_W;
+				int cy = (ch / HUD_ATLAS_COLS) * HUD_TEX_CELL_H;
+				hud_uv(cx, cy, HUD_TEX_GLYPH_W, HUD_TEX_GLYPH_H,
+						&u0, &v0, &u1, &v1);
+				hud_quad(&verts[count], dev_w, dev_h,
+						(float)(it->x + c * HUD_CELL_W * HUD_DRAW_SCALE),
+						(float)it->y,
+						(float)(HUD_GLYPH_W * HUD_DRAW_SCALE),
+						(float)(HUD_GLYPH_H * HUD_DRAW_SCALE),
+						u0, v0, u1, v1);
+				count += 6;
+			}
+		}
+		else if (it->argb) {
+			int black = ((it->argb & 0x00FFFFFFu) == 0);
+			hud_solid_uv(HUD_GRAD_W + (black ? 1 : 0), HUD_GRID_H, &u0, &v0);
+			hud_quad(&verts[count], dev_w, dev_h, (float)it->x, (float)it->y,
+					(float)it->w, (float)it->h, u0, v0, u0, v0);
+			count += 6;
+		}
+		else {
+			/* Gauge fill: one gradient texel, sampled with constant UVs. */
+			int sx = (int)(it->grad * (float)(HUD_GRAD_W - 1));
+			hud_solid_uv(sx, HUD_GRID_H, &u0, &v0);
+			hud_quad(&verts[count], dev_w, dev_h, (float)it->x, (float)it->y,
+					(float)it->w, (float)it->h, u0, v0, u0, v0);
+			count += 6;
+		}
+	}
+	if (!count) return;
+
+	GLint prev_prog = 0, prev_tex = 0, prev_active = 0, prev_vao = 0;
+	GLint prev_viewport[4] = { 0, 0, 0, 0 };
+	glGetIntegerv(GL_CURRENT_PROGRAM, &prev_prog);
+	/* The software present leaves the viewport at the final pass's rect
+	 * (runShaderPass sets it to the present rect), while runShaderPass users
+	 * used to reset it per draw -- a raw batch has to do it itself or the HUD
+	 * lands inside the game rect. */
+	glGetIntegerv(GL_VIEWPORT, prev_viewport);
+	glViewport(0, 0, dev_w, dev_h);
+	/* Attribute pointers are captured into the bound VAO on GLES3; draw on
+	 * VAO 0 like runShaderPass does, or they would land in the core's. */
+	glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prev_vao);
+	glBindVertexArray(0);
+	/* GL_TEXTURE_BINDING_2D is per unit: read unit 0's, and restore it there,
+	 * instead of saving whichever unit happened to be active. */
+	glGetIntegerv(GL_ACTIVE_TEXTURE, &prev_active);
+	glActiveTexture(GL_TEXTURE0);
+	glGetIntegerv(GL_TEXTURE_BINDING_2D, &prev_tex);
+
+	glUseProgram(s_shader_overlay.shader_p);
+	if (s_shader_overlay.u_Texture >= 0)
+		glUniform1i(s_shader_overlay.u_Texture, 0);
+	glBindTexture(GL_TEXTURE_2D, hud_atlas_tex);
+
+	if (!hud_vbo) glGenBuffers(1, &hud_vbo);
+	glBindBuffer(GL_ARRAY_BUFFER, hud_vbo);
+	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(count * sizeof(HudVert)), verts,
+			GL_DYNAMIC_DRAW);
+	glEnableVertexAttribArray((GLuint)hud_pos_loc);
+	glVertexAttribPointer((GLuint)hud_pos_loc, 2, GL_FLOAT, GL_FALSE,
+			sizeof(HudVert), (const GLvoid *)0);
+	glEnableVertexAttribArray((GLuint)hud_tex_loc);
+	glVertexAttribPointer((GLuint)hud_tex_loc, 2, GL_FLOAT, GL_FALSE,
+			sizeof(HudVert), (const GLvoid *)(2 * sizeof(float)));
+
+	/* Same blend the overlay pass enables; the composite restores the core's
+	 * own blend state at the end of PLAT_composite_overlays. */
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glDrawArrays(GL_TRIANGLES, 0, (GLsizei)count);
+
+	glDisableVertexAttribArray((GLuint)hud_pos_loc);
+	glDisableVertexAttribArray((GLuint)hud_tex_loc);
+	glBindVertexArray((GLuint)prev_vao);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glBindTexture(GL_TEXTURE_2D, (GLuint)prev_tex);   /* unit 0's */
+	glUseProgram((GLuint)prev_prog);
+	glActiveTexture((GLenum)prev_active);
+	glViewport(prev_viewport[0], prev_viewport[1],
+			prev_viewport[2], prev_viewport[3]);
+}
 
 // Every RGBA overlay draw goes through s_pass_overlay, and runShaderPass reads
 // the pass's source size for the TextureSize/InputSize/TexelSize uniforms. Set
@@ -1394,55 +1649,6 @@ static void overlay_pass_src(int w, int h) {
 	s_pass_overlay.srch = s_pass_overlay.texh = h;
 }
 
-static void update_debug_hud_texture(void) {
-	int w = device_width / 2, h = device_height / 2;
-	if (w <= 0 || h <= 0) return;
-	if (!dbg_hud_pixels || dbg_hud_w != w || dbg_hud_h != h) {
-		free(dbg_hud_pixels);
-		dbg_hud_pixels = calloc((size_t)w * (size_t)h, 4);
-		dbg_hud_w = w;
-		dbg_hud_h = h;
-		dbg_hud_tex_sized = 0;
-	}
-	if (!dbg_hud_pixels) return;
-
-	// Transparent background: the HUD's black text boxes and white glyphs are
-	// opaque, everything else blends through to the frame either path produced.
-	memset(dbg_hud_pixels, 0, (size_t)w * (size_t)h * 4);
-	PLAT_draw_debug_hud(dbg_hud_pixels, (unsigned)w, (unsigned)h,
-			(size_t)w * 4, RETRO_PIXEL_FORMAT_XRGB8888);
-
-	if (!dbg_hud_tex) {
-		glGenTextures(1, &dbg_hud_tex);
-		if (!dbg_hud_tex) return;
-	}
-	glBindTexture(GL_TEXTURE_2D, dbg_hud_tex);
-	PLAT_gl_unpack_reset();
-	if (!dbg_hud_tex_sized) {
-		// NEAREST, matching the effect/overlay/notification layers (and the
-		// software path's HUD, which is stamped into the core frame and only
-		// ever scaled by the chain's own filter). The HUD surface is exactly
-		// half the device (360x240) and the composite draws it as a
-		// clip-space quad over the full 720x480 viewport -- exactly 2x. GL
-		// samples a 2x-magnified texel at s = x/2 + 0.25, i.e. a 0.25-texel
-		// phase off the texel centre, so GL_LINEAR was a real 0.75/0.25
-		// blend between neighbouring texels (measured: 0.00 of the near-white
-		// dot-matrix pixels had an identical horizontal neighbour, where 2x
-		// replication gives ~0.5). That only softened the font and bled the
-		// transparent background through the glyph edges; NEAREST restores
-		// the exact 2x replication the half-res design is for.
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA,
-				GL_UNSIGNED_BYTE, dbg_hud_pixels);
-		dbg_hud_tex_sized = 1;
-	} else {
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA,
-				GL_UNSIGNED_BYTE, dbg_hud_pixels);
-	}
-}
 
 
 
@@ -1633,23 +1839,8 @@ void PLAT_composite_overlays(int effect_x, int effect_y, unsigned int pipeline_s
 	// from sw_present_draw, the hw-render path from ma_gl_present_quad), so the
 	// HUD looks the same on both -- and because it is part of the draw that
 	// PLAT_GL_screenCapture replays, screenshots contain it too.
-	if (PLAT_debug_hud_active()) {
-		update_debug_hud_texture();
-		if (dbg_hud_tex) {
-			// The OVERLAY pass is the one draw in the frontend that ENABLES
-			// GL_BLEND (runShaderPass: alpha==1 pass -> glEnable(GL_BLEND) +
-			// glBlendFunc). See the blend save/restore at the top of this
-			// function: the core's own cap bookkeeping does not know about
-			// that enable, so it must not be left behind.
-			overlay_pass_src(dbg_hud_w, dbg_hud_h);
-			runShaderPass(
-				&s_pass_overlay, dbg_hud_tex, pipeline_src,
-				NULL,
-				GL_NONE,
-				0, 0, device_width, device_height,
-				NULL, 0, 1);
-		}
-	}
+	if (PLAT_debug_hud_active())
+		hud_render(device_width, device_height);
 
 	// Leave the blend state exactly as this composite found it: the core's
 	// cap bookkeeping (glsm_state.cap_state) never saw the enable above and

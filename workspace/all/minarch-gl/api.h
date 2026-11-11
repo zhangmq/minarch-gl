@@ -740,7 +740,17 @@ void PLAT_diag_capture(const char *tag);
 // frame (upstream call site); the hw-render path has no CPU frame, so ma_gl.c
 // rasterizes the same function onto a frontend surface and composites it.
 void GFX_frame_stats_display_only(double target_fps);
-void PLAT_draw_debug_hud(const void* data, unsigned width, unsigned height, size_t pitch, enum retro_pixel_format fmt);
+/* Debug HUD: ma_video.c produces a draw list (device pixels), generic_video.c
+ * renders it as one quad batch from a font atlas baked at startup -- no
+ * per-frame surface, memset or texture upload. */
+typedef struct {
+	int x, y, w, h;     /* device pixels; a text run ignores w/h */
+	uint32_t argb;      /* solid colour, or 0 to sample the gauge gradient */
+	float grad;         /* 0..1, used when argb == 0 */
+	const char *text;   /* NULL: solid rect */
+} MA_HudItem;
+const char *MA_HUD_glyph(unsigned char c);
+int MA_HUD_layout(MA_HudItem *items, int max, int dev_w, int dev_h);
 /* True while the debug HUD must be composited (show_debug + 5s warm-up). Read
  * by the shared overlay stage so it can skip the layer entirely. */
 int PLAT_debug_hud_active(void);
