@@ -145,6 +145,52 @@ pin() {
 	sed -n "s/^$1_$2[[:space:]]*=[[:space:]]*//p" "$CORES_MK" | head -1
 }
 
+# Some cores need more than a source tree: yabasanshiro's CMake port wants two
+# pinned dependency trees plus musashi's generated 68k sources in a directory it
+# is pointed at, and links the vendor GL/EGL blobs by absolute path.  Stage both
+# into the build tree, from a cache that only has to be filled once.
+#
+#   .cache/cores/yaba-deps/{libchdr,zlib}   git clones at the pins the core's
+#                                           CMakeLists names (see the header of
+#                                           build-libretro.sh upstream); musashi
+#                                           is generated during the build.
+#   .cache/cores/h700-deps/lib/{libEGL.so.1,libmali.so.0}
+#                                           the device's GL/EGL libs; the image
+#                                           sysroot has libEGL but not the Mali
+#                                           blob.  Seeded from $GL_DEPS_SRC
+#                                           (default /home/zmq/projects/h700-deps)
+#                                           or by hand from the device.
+stage_core_deps() {
+	say "staging core dependencies"
+	src="$CORE_CACHE/yaba-deps"
+	[ -d "$src" ] || die "missing $src (yabasanshiro's libchdr/zlib sources)"
+	mkdir -p "$TREE/workspace/h700/cores"
+	rm -rf "$TREE/workspace/h700/cores/yaba-deps"
+	cp -a "$src" "$TREE/workspace/h700/cores/yaba-deps"
+
+	gl="$CORE_CACHE/h700-deps"
+	if [ ! -f "$gl/lib/libmali.so.0" ] || [ ! -f "$gl/lib/libEGL.so.1" ]; then
+		gldeps=${GL_DEPS_SRC:-/home/zmq/projects/h700-deps}
+		[ -f "$gldeps/lib/libmali.so.0" ] ||
+			die "missing vendor GL libs: put libEGL.so.1 and libmali.so.0 in $gl/lib or set GL_DEPS_SRC"
+		mkdir -p "$gl/lib"
+		cp -f "$gldeps/lib/libEGL.so.1" "$gldeps/lib/libmali.so.0" "$gl/lib/"
+		chmod 0644 "$gl/lib/libmali.so.0" "$gl/lib/libEGL.so.1"
+	fi
+	rm -rf "$TREE/workspace/h700/cores/h700-deps"
+	mkdir -p "$TREE/workspace/h700/cores/h700-deps"
+	cp -a "$gl/lib" "$TREE/workspace/h700/cores/h700-deps/lib"
+	# The core's CMakeLists adds ${H700_DEPS}/include and expects GLES3/EGL
+	# headers there; the image sysroot has most of them but not GLES3/gl3ext.h
+	# (nor does the vendor dir), so our copy of that one header is overlaid on
+	# top: workspace/h700/cores/include/.
+	if [ -d "$gl/include" ]; then
+		cp -a "$gl/include" "$TREE/workspace/h700/cores/h700-deps/include"
+	fi
+	mkdir -p "$TREE/workspace/h700/cores/h700-deps/include"
+	cp -a "$ROOT/workspace/h700/cores/include/." "$TREE/workspace/h700/cores/h700-deps/include/"
+}
+
 # The NextUI core template clones into workspace/<plat>/cores/src/<core> and
 # skips that step when the directory already exists.  Pre-cloning here keeps the
 # pins authoritative (no shallow branch tips), avoids the mupen recursive
@@ -154,6 +200,17 @@ preclone() {
 	[ -n "$repo" ] || die "no ${core}_REPO in $CORES_MK"
 	[ -n "$hash" ] || die "no ${core}_HASH in $CORES_MK"
 	d="$CORE_CACHE/$core"
+	# The cache is keyed by core name, not by repository: a pin that moved to a
+	# different repo (yabasanshiro did, 2026-11-18) would otherwise be built from
+	# the old checkout with no warning at all.
+	if [ -d "$d/.git" ]; then
+		cached_url=$(git -C "$d" remote get-url origin 2>/dev/null || true)
+		cached_head=$(git -C "$d" rev-parse HEAD 2>/dev/null || true)
+		if [ "$cached_url" != "$repo" ] || [ "$cached_head" != "$hash" ]; then
+			say "re-cloning $core (cache had ${cached_head:-nothing} from ${cached_url:-nowhere})"
+			rm -rf "$d"
+		fi
+	fi
 	if [ ! -d "$d/.git" ]; then
 		say "cloning $core @ $hash"
 		mkdir -p "$CORE_CACHE"
@@ -168,6 +225,8 @@ preclone() {
 	rm -rf "$TREE/workspace/h700/cores/src/$core"
 	cp -a "$d" "$TREE/workspace/h700/cores/src/$core"
 }
+
+stage_core_deps
 
 for c in $CORES; do
 	preclone "$c" "$(pin "$c" REPO)" "$(pin "$c" BRANCH)" "$(pin "$c" HASH)" "$(pin "$c" SUBMODULES)"

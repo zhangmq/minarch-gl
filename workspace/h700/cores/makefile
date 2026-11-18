@@ -61,27 +61,50 @@ mupen64plus_next_MAKE = make platform=unix FORCE_GLES3=1 ARCH=aarch64 WITH_DYNAR
 # exactly what must be avoided on a fresh clone -- pre-clone instead (see above).
 mupen64plus_next_SUBMODULES =
 
-# yabasanshiro: Sega Saturn, GLES hw-render.
-# This is OUR fork (github.com/zhangmq/yabause, branch h700, single branch).  The
-# libretro port lives in yabause/src/libretro; platform=arm64 selects the AARCH64
-# dynarec + FORCE_GLES profile.  The shipped core enables the async VDP renderer
-# (YAB_ASYNC_RENDERING) and the core-owned shared EGL context
-# (YAB_CORE_SHARED_CONTEXT), which is the hw-render model minarch-gl drives.
-# -ldl is required with the glibc 2.28 sysroot: the shared-context path uses
-# dlopen/dlsym and libdl is still a separate library there.
-yabasanshiro_REPO = https://github.com/zhangmq/yabause
-yabasanshiro_BRANCH = h700
-yabasanshiro_HASH = 9b36fd6ef8985129d2f829a24d0d3e43f8a621e2
-# Relative to src/ (the core template always prefixes `src/`): the libretro port
-# sits one level down, inside the yabause checkout this core is fetched as.
-yabasanshiro_BUILD_PATH = yabasanshiro/yabause/src/libretro
-yabasanshiro_CORE = yabasanshiro_libretro.so
-yabasanshiro_MAKE = CFLAGS="-DYAB_ASYNC_RENDERING -DYAB_CORE_SHARED_CONTEXT" \
-	CXXFLAGS="-DYAB_ASYNC_RENDERING -DYAB_CORE_SHARED_CONTEXT" \
-	LDFLAGS="-ldl" make platform=arm64
-# Fetch only the small Android submodule: the default --recursive path would also
-# clone ext/eigen, which the libretro build never uses.
-yabasanshiro_SUBMODULES = yabause/src/android/oboe
+# yabasanshiro: Sega Saturn + ST-V, GLES hw-render.
+#
+# The core lives in zhangmq/yabasanshiro-pirry on the h700-libretro branch.  Its
+# libretro port is a CMake project now (the old in-tree makefile is gone), and
+# tools/build.sh stages its dependencies from .cache -- see yabasanshiro_MAKE.
+#
+# We drive CMake ourselves rather than through the core's build-libretro.sh:
+# that script exists for the core's own developers (it git-clones libchdr and
+# zlib and takes its compiler from an optional toolchain file), while this build
+# has to stay hermetic, use the image's gcc 8.3 like the other cores, and keep
+# the same tuning flags.  Our toolchain file is next to this makefile.
+#
+# The two <filesystem> translation units the CMake source list added
+# (thr-linux.cpp, PlayRecorder.cpp) need libstdc++fs with gcc < 9; the upstream
+# CMakeLists does not link it yet, so it is added here until the core carries it
+# (see .docs/FEEDBACK-YABA-BUILD-20261118.md).
+yabasanshiro_REPO = https://github.com/zhangmq/yabasanshiro-pirry
+yabasanshiro_BRANCH = h700-libretro
+yabasanshiro_HASH = eb32d3f9667ca1e00afcf633881c9484624b8f6f
+yabasanshiro_BUILD_PATH = yabasanshiro
+yabasanshiro_CORE = build-h700/yabasanshiro_libretro.so
+# musashi's generated m68k sources (m68kops.c / m68kop*.c) are a pure function
+# of m68k_in.c: build the generator with the *host* compiler (the container has
+# gcc 13) and run it into the staged dependency tree.  GCC_VERSION=8 matches the
+# image's 8.3: the engine picks <experimental/filesystem> below gcc 9, and
+# -lstdc++fs is what resolves those symbols.
+yabasanshiro_MAKE = rm -rf deps build-h700 && \
+	cp -a /workspace/h700/cores/yaba-deps deps && \
+	mkdir -p deps/musashi build-h700/.tools && \
+	cc -O2 -o build-h700/.tools/m68kmake yabause/src/musashi/m68kmake.c && \
+	./build-h700/.tools/m68kmake deps/musashi/ yabause/src/musashi/m68k_in.c && \
+	cmake -S yabause/src/libretro -B build-h700 \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_TOOLCHAIN_FILE=/workspace/h700/cores/yabasanshiro-toolchain.cmake \
+		-DYAB_DEPS_CACHE=$$PWD/deps \
+		-DH700_DEPS=/workspace/h700/cores/h700-deps \
+		-DCMAKE_CXX_STANDARD=17 -DCMAKE_CXX_STANDARD_REQUIRED=ON \
+		-DCMAKE_CXX_STANDARD_LIBRARIES=-lstdc++fs && \
+	cmake --build build-h700 --parallel 4 --target yabasanshiro_libretro #
+# No submodules are needed: libchdr/zlib come from the staged cache and the
+# only entry left in the core's .gitmodules is ext/eigen, which the libretro
+# build does not use.  Leaving this empty is safe because tools/build.sh always
+# pre-clones the source, so the template's own clone/submodule rule is skipped.
+yabasanshiro_SUBMODULES =
 
 ###############################
 

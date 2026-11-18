@@ -16,9 +16,10 @@ BASE_DATE=2026-10-20T22:03:58Z
 TOOLCHAIN_IMAGE=ghcr.io/loveretro/h700-toolchain
 TOOLCHAIN_DIGEST=sha256:bf5d8f9f5442cad789aa77176bc059ec823caefa3258bf30780eee681c777119
 
-# Saturn core: our own fork, single branch, h700 only.  Keep in sync with the
-# yabasanshiro_HASH line in workspace/h700/cores/makefile (tools/sync.py check
-# verifies the two agree).
-YABAUSE_REPO=zhangmq/yabause
-YABAUSE_REF=h700
-YABAUSE_SHA=9b36fd6ef8985129d2f829a24d0d3e43f8a621e2
+# Saturn core: our own fork, single branch, h700 only.  Since 2026-11-18 the
+# libretro port lives in yabasanshiro-pirry (CMake, no in-tree makefile).  Keep
+# in sync with the yabasanshiro_HASH line in workspace/h700/cores/makefile
+# (tools/sync.py check verifies the two agree).
+YABAUSE_REPO=zhangmq/yabasanshiro-pirry
+YABAUSE_REF=h700-libretro
+YABAUSE_SHA=eb32d3f9667ca1e00afcf633881c9484624b8f6f
