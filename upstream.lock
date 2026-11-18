@@ -18,7 +18,7 @@ TOOLCHAIN_DIGEST=sha256:bf5d8f9f5442cad789aa77176bc059ec823caefa3258bf30780eee68
 
 # Saturn core: our own fork, single branch, h700 only.  Since 2026-11-18 the
 # libretro port lives in yabasanshiro-pirry (CMake, no in-tree makefile).  Keep
-# in sync with the yabasanshiro_HASH line in workspace/h700/cores/makefile
+# in sync with the yabasanshiro_HASH line in gles-cores/h700/makefile
 # (tools/sync.py check verifies the two agree).
 YABAUSE_REPO=zhangmq/yabasanshiro-pirry
 YABAUSE_REF=h700-libretro

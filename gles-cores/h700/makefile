@@ -2,7 +2,11 @@
 #
 # This file replaces NextUI's workspace/h700/cores/makefile inside the
 # assembled build tree, so `make core CORE=<name>` only knows the cores this
-# repository ships.  The build machinery itself (the TEMPLATE with clone/patch/
+# repository ships.  The repository copy lives at gles-cores/<plat>/ (outside
+# workspace/): these cores are not upstream ones we maintain, so they are not
+# an overlay.  tools/build.sh copies the directory to workspace/<plat>/cores/
+# in the tree; per-platform files for other SoCs would live in their own
+# gles-cores/<plat>/.  The build machinery itself (the TEMPLATE with clone/patch/
 # output rules) comes from NextUI's workspace/all/cores/makefile, which the base
 # tree provides -- see the include at the bottom.
 #

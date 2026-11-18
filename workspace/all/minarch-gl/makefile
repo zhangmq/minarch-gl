@@ -3,9 +3,10 @@
 #
 # Design (see workspace/tmp/minarch-gl-rewrite/PLAN.md):
 #   * upstream all/minarch/ stays byte-identical; nothing here edits it.
-#   * this directory holds ONLY files that must differ from upstream.  With no
-#     source files in it, the target is exactly upstream minarch built through
-#     this wrapper -- that is the step-1 baseline the rewrite starts from.
+#   * this directory holds the overrides of files upstream keeps in all/minarch
+#     and all/common (they are compiled as part of the merged target).  The SoC
+#     platform layer (h700/platform/platform.c) is replaced at its canonical
+#     NextUI path in workspace/ and needs no handling here.
 #   * the build merges upstream minarch/ into MERGED_DIR, copies this
 #     directory's files over it, and builds there, so relative paths inside the
 #     merged tree (../common, ../../$(PLATFORM)/..., ../../hash.txt) resolve as
@@ -27,15 +28,15 @@ TARGET      = minarch-gl
 # Upstream's SOURCE list, verbatim from all/minarch/makefile.  The wrapper hands
 # it to the recursive make on the COMMAND LINE, which is how the overlay swaps
 # an upstream translation unit for one of ours without editing upstream or
-# shipping a makefile into the merged tree: replace the path here (api.c,
-# platform.c, ...) and drop the corresponding file into this directory.
-# generic_video.c needs no entry -- h700 platform.c #includes it, so overriding
-# platform.c is what selects our copy.
+# shipping a makefile into the merged tree: replace the path here (api.c, ...)
+# and drop the corresponding file into this directory.
+# generic_video.c needs no entry -- platform.c #includes it and -I. finds this
+# directory's copy first.
 UPSTREAM_SOURCE = minarch.c ma_cheats.c ma_rewind.c ma_audio.c ma_input.c \
 	ma_options.c ma_frontend_opts.c ma_saves.c ma_video.c ma_core.c ma_game.c \
 	ma_environment.c ma_config.c ma_menu.c ma_runframe.c \
 	../common/utils.c ../common/config.c api.c \
-	../common/notification.c platform.c \
+	../common/notification.c ../../$(PLATFORM)/platform/platform.c \
 	../common/http.c ../common/ra_badges.c ../common/ra_offline.c \
 	../common/ra_sync.c ../common/ra_event_queue.c ra_integration.c chd_reader.c \
 	glslp.c ma_chain.c ma_gl.c ma_present.c ma_pace.c ma_preset.c ma_perf.c

@@ -9,14 +9,14 @@ This release is a **single tool pak**. Installing it changes nothing; you pick t
 frontend inside its UI, and it installs the cores for you:
 
 ```
-Tools/h700/Minarch GL.pak          # unzip Minarch.GL.pak.zip here
+Tools/h700/MinarchGL Installer.pak    # unzip MinarchGL.Installer.pak.zip here
 ```
 
 ## Install
 
-1. Unzip `Minarch.GL.pak.zip` into `Tools/h700/` on the SD card
-   (you get `Tools/h700/Minarch GL.pak/`).
-2. On the device: **Tools → Minarch GL → Enable minarch-gl**.
+1. Unzip `MinarchGL.Installer.pak.zip` into `Tools/h700/` on the SD card
+   (you get `Tools/h700/MinarchGL Installer.pak/`).
+2. On the device: **Tools → MinarchGL Installer → Enable MinarchGL**.
 3. Put your ROMs in the folders below and launch them from the menu as usual.
 
 Enable does three things, and only when you press it:
@@ -61,11 +61,11 @@ frontend is never asked to load a core it cannot run.
 
 | File | Size (B) | sha256 |
 |---|---:|---|
-| `minarch-gl.elf` | 667248 | `056fdc29b22b0d3b4947d294896e9baf583e87fbe9774d659e3979cd78f8a66e` |
-| `Minarch.GL.pak.zip` | 4850962 | `a12d843b0b5093ba53007054972d5c1f1b4ddc407a7fd158da57ca28532814ba` |
+| `minarch-gl.elf` | 676592 | `22a6a11ca53b1d25da703ac13f3d4b3c61a6c4a48865fabbb74bc558fd4678ad` |
+| `MinarchGL.Installer.pak.zip` | 6600112 | `25fcb5fd9658cab3dd8e3f3af0da44351830a27ea60006a9fcec2005bea85166` |
 
-`Minarch.GL.pak.zip` contains the frontend (md5 `51d0fc1799b595b166c69b1eda8f6e32`),
-the switcher and the three cores; the switcher's file logic is covered by
+`MinarchGL.Installer.pak.zip` contains the frontend (md5 `c3bcaaeb664047c7ebf59f7a2215f6b0`),
+the installer and the three cores; the installer's file logic is covered by
 `make test` on the build host.
 
 ## Build provenance
@@ -80,13 +80,13 @@ the switcher and the three cores; the switcher's file logic is covered by
 
 ```sh
 make build   # frontend
-make cores   # + switcher + 3 cores -> dist/Minarch.GL.pak.zip
-make test    # host-side switcher tests
+make cores   # + installer + 3 cores -> dist/MinarchGL.Installer.pak.zip
+make test    # host-side installer tests
 ```
 
 ## License
 
-The frontend and the switcher are derived from NextUI and distributed under
+The frontend and the installer are derived from NextUI and distributed under
 PolyForm Noncommercial 1.0.0 (`LICENSE`, `NOTICE`) — non-commercial use only. The
 bundled cores are GPLv2 and ship as separate `.so` files; their sources are the
 pinned repositories above:
@@ -96,11 +96,11 @@ pinned repositories above:
 * yabasanshiro — <https://github.com/zhangmq/yabause/tree/9b36fd6ef8985129d2f829a24d0d3e43f8a621e2>
 
 The core build recipes (flags, pins, submodule notes) are in
-`workspace/h700/cores/makefile`, so the binaries can be rebuilt from those
+`gles-cores/h700/makefile`, so the binaries can be rebuilt from those
 sources with the pinned toolchain.
 
 ## Status
 
-Experimental. Built and verified by construction (`make test` for the switcher's
+Experimental. Built and verified by construction (`make test` for the installer's
 file logic, elf identity and executable bits inside the pak); **device smoke
 testing on an RGSP was not completed for this build**.

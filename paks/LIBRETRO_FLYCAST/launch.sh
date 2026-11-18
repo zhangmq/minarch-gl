@@ -9,8 +9,8 @@
 #
 # No frontend is bundled here on purpose.  Every pak invokes the bare name
 # `minarch.elf`, which resolves through PATH to $SYSTEM_PATH/bin/minarch.elf --
-# the switcher in Tools/h700/Minarch GL.pak decides whether that is stock NextUI
-# or minarch-gl.  While stock is active the switcher renames this pak to
+# the installer in Tools/h700/MinarchGL Installer.pak decides whether that is stock NextUI
+# or minarch-gl.  While stock is active the installer renames this pak to
 # *.pak.disabled (it carries the `minarch-gl-only` marker), because stock
 # minarch cannot drive a GLES core.
 

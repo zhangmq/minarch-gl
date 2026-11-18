@@ -21,7 +21,11 @@ DIST="$ROOT/dist"
 CORE_CACHE="$ROOT/.cache/cores"
 DEPS_CACHE="$ROOT/.cache/frontend-deps"
 ALL_CORES="flycast mupen64plus_next yabasanshiro"
-CORES_MK="$ROOT/workspace/h700/cores/makefile"
+# Per-platform core builds live in gles-cores/<plat>/, mirroring NextUI's
+# workspace/<plat>/ split.  These cores are not upstream ones we maintain, so
+# they are not part of the workspace overlay.  h700 is the only platform today.
+CORES_PLATFORM=h700
+CORES_MK="$ROOT/gles-cores/$CORES_PLATFORM/makefile"
 
 say() { printf '\n== %s\n' "$*" >&2; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -130,9 +134,14 @@ if [ -z "${BUILD_CORES:-}" ]; then
 	exit 0
 fi
 
-# The switcher only ships inside the pak, so it is built with the pak.
-say "building minarch-switch"
-run 'cd /workspace/all/minarch-switch && make'
+# The installer only ships inside the pak, so it is built with the pak.  It
+# lives outside workspace/ in this repository (it is a standalone pak app, not
+# an overlay of a NextUI file); the build tree keeps NextUI's layout, so it is
+# copied to workspace/installer and built from there.
+say "building minarch-gl-installer"
+rm -rf "$TREE/workspace/installer"
+cp -a "$ROOT/installer" "$TREE/workspace/installer"
+run 'cd /workspace/installer && make'
 
 if [ "$BUILD_CORES" = "1" ]; then
 	CORES="$ALL_CORES"
@@ -141,7 +150,7 @@ else
 fi
 
 pin() {
-	# pin <core> <VAR>  -> value from workspace/h700/cores/makefile
+	# pin <core> <VAR>  -> value from cores/makefile
 	sed -n "s/^$1_$2[[:space:]]*=[[:space:]]*//p" "$CORES_MK" | head -1
 }
 
@@ -161,12 +170,18 @@ pin() {
 #                                           (default /home/zmq/projects/h700-deps)
 #                                           or by hand from the device.
 stage_core_deps() {
-	say "staging core dependencies"
+	say "staging core build files and dependencies"
+	# Our core makefile/toolchain/headers are not part of NextUI, so they live in
+	# gles-cores/<plat>/ at the repository root; the build tree still expects
+	# them at workspace/<plat>/cores/ where NextUI's template looks.
+	rm -rf "$TREE/workspace/$CORES_PLATFORM/cores"
+	mkdir -p "$TREE/workspace/$CORES_PLATFORM/cores"
+	cp -a "$ROOT/gles-cores/$CORES_PLATFORM/." "$TREE/workspace/$CORES_PLATFORM/cores/"
 	src="$CORE_CACHE/yaba-deps"
 	[ -d "$src" ] || die "missing $src (yabasanshiro's libchdr/zlib sources)"
-	mkdir -p "$TREE/workspace/h700/cores"
-	rm -rf "$TREE/workspace/h700/cores/yaba-deps"
-	cp -a "$src" "$TREE/workspace/h700/cores/yaba-deps"
+	mkdir -p "$TREE/workspace/$CORES_PLATFORM/cores"
+	rm -rf "$TREE/workspace/$CORES_PLATFORM/cores/yaba-deps"
+	cp -a "$src" "$TREE/workspace/$CORES_PLATFORM/cores/yaba-deps"
 
 	gl="$CORE_CACHE/h700-deps"
 	if [ ! -f "$gl/lib/libmali.so.0" ] || [ ! -f "$gl/lib/libEGL.so.1" ]; then
@@ -177,18 +192,18 @@ stage_core_deps() {
 		cp -f "$gldeps/lib/libEGL.so.1" "$gldeps/lib/libmali.so.0" "$gl/lib/"
 		chmod 0644 "$gl/lib/libmali.so.0" "$gl/lib/libEGL.so.1"
 	fi
-	rm -rf "$TREE/workspace/h700/cores/h700-deps"
-	mkdir -p "$TREE/workspace/h700/cores/h700-deps"
-	cp -a "$gl/lib" "$TREE/workspace/h700/cores/h700-deps/lib"
+	rm -rf "$TREE/workspace/$CORES_PLATFORM/cores/h700-deps"
+	mkdir -p "$TREE/workspace/$CORES_PLATFORM/cores/h700-deps"
+	cp -a "$gl/lib" "$TREE/workspace/$CORES_PLATFORM/cores/h700-deps/lib"
 	# The core's CMakeLists adds ${H700_DEPS}/include and expects GLES3/EGL
 	# headers there; the image sysroot has most of them but not GLES3/gl3ext.h
 	# (nor does the vendor dir), so our copy of that one header is overlaid on
-	# top: workspace/h700/cores/include/.
+	# top: gles-cores/<plat>/include/ (copied into the tree below).
 	if [ -d "$gl/include" ]; then
-		cp -a "$gl/include" "$TREE/workspace/h700/cores/h700-deps/include"
+		cp -a "$gl/include" "$TREE/workspace/$CORES_PLATFORM/cores/h700-deps/include"
 	fi
-	mkdir -p "$TREE/workspace/h700/cores/h700-deps/include"
-	cp -a "$ROOT/workspace/h700/cores/include/." "$TREE/workspace/h700/cores/h700-deps/include/"
+	mkdir -p "$TREE/workspace/$CORES_PLATFORM/cores/h700-deps/include"
+	cp -a "$ROOT/gles-cores/$CORES_PLATFORM/include/." "$TREE/workspace/$CORES_PLATFORM/cores/h700-deps/include/"
 }
 
 # The NextUI core template clones into workspace/<plat>/cores/src/<core> and
@@ -221,9 +236,9 @@ preclone() {
 	if [ -n "$sub" ]; then
 		git -C "$d" submodule update --init --recursive $sub
 	fi
-	mkdir -p "$TREE/workspace/h700/cores/src"
-	rm -rf "$TREE/workspace/h700/cores/src/$core"
-	cp -a "$d" "$TREE/workspace/h700/cores/src/$core"
+	mkdir -p "$TREE/workspace/$CORES_PLATFORM/cores/src"
+	rm -rf "$TREE/workspace/$CORES_PLATFORM/cores/src/$core"
+	cp -a "$d" "$TREE/workspace/$CORES_PLATFORM/cores/src/$core"
 }
 
 stage_core_deps
@@ -236,17 +251,20 @@ done
 
 say "assembling the Minarch GL pak"
 mkdir -p "$DIST"
-stage="$ROOT/build/paks/Minarch GL.pak"
+stage="$ROOT/build/paks/MinarchGL Installer.pak"
 rm -rf "$stage"
 mkdir -p "$stage/payload"
 cp -a "$ROOT/paks/MinarchGL/." "$stage/"
-cp -f "$TREE/workspace/all/minarch-switch/build/h700/minarch-switch.elf" "$stage/minarch-switch.elf"
+cp -f "$TREE/workspace/installer/build/h700/minarch-gl-installer.elf" "$stage/minarch-gl-installer.elf"
 cp -f "$DIST/minarch-gl.elf" "$stage/payload/minarch-gl.elf"
+# Read back by the installer's Status screen (and copied next to the installed
+# binary), so a card can say which build of the frontend it is running.
+printf '%s\n' "$(date +%Y.%m.%d)" > "$stage/payload/minarch-gl.version"
 # A checkout that lost the exec bit (zip round-trip, copy from another OS) would
 # otherwise ship a pak that cannot be launched; make the bits explicit.
-chmod 0755 "$stage/launch.sh" "$stage/minarch-switch.elf"
+chmod 0755 "$stage/launch.sh" "$stage/minarch-gl-installer.elf"
 
-# The core paks ride inside the tool pak: the switcher installs them into
+# The core paks ride inside the tool pak: the installer installs them into
 # Emus/h700 when the user enables GL, so the frontend and the cores it needs
 # cannot be installed separately or drift out of step.
 for c in $CORES; do
@@ -256,7 +274,7 @@ for c in $CORES; do
 		yabasanshiro) tag=LIBRETRO_YABASANSHIRO ;;
 		*) die "no pak tag for core $c" ;;
 	esac
-	core_so="$TREE/workspace/h700/cores/output/${c}_libretro.so"
+	core_so="$TREE/workspace/$CORES_PLATFORM/cores/output/${c}_libretro.so"
 	[ -f "$core_so" ] || die "missing $core_so (core build failed?)"
 	src="$ROOT/paks/$tag"
 	[ -d "$src" ] || die "missing pak template $src"
@@ -264,6 +282,11 @@ for c in $CORES; do
 	cp -a "$src" "$dst"
 	cp -f "$core_so" "$dst/${c}_libretro.so"
 	chmod 0755 "$dst/launch.sh"
+	# What the Status screen shows next to each core: the core name and the pin
+	# it was built from.  Written here, at packaging time, because it is the only
+	# place that knows both.
+	printf '%s %s\n' "$c" "$(git -C "$CORE_CACHE/$c" rev-parse --short=8 HEAD 2>/dev/null || echo unknown)" \
+		> "$dst/version"
 	# A pak is a binary distribution: the frontend half is PolyForm
 	# Noncommercial (LICENSE + NOTICE), the core half is GPLv2 and ships its
 	# own licence text.  The pins/source links live in NOTICE.
@@ -275,9 +298,9 @@ for c in $CORES; do
 done
 cp -f "$ROOT/LICENSE" "$ROOT/NOTICE" "$stage/"
 
-rm -f "$DIST/Minarch.GL.pak.zip"
-(cd "$ROOT/build/paks" && zipdir "$DIST/Minarch.GL.pak.zip" "Minarch GL.pak")
-echo "pak: $DIST/Minarch.GL.pak.zip" >&2
+rm -f "$DIST/MinarchGL.Installer.pak.zip"
+(cd "$ROOT/build/paks" && zipdir "$DIST/MinarchGL.Installer.pak.zip" "MinarchGL Installer.pak")
+echo "pak: $DIST/MinarchGL.Installer.pak.zip" >&2
 
 say "done"
 ls -l "$DIST"

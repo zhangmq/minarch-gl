@@ -194,7 +194,7 @@ def cmd_pin(args):
     print("next: tools/build.sh && (device smoke) && git commit")
 
     # the yabause pin lives in two places; keep them honest
-    mk = os.path.join(ROOT, "workspace/h700/cores/makefile")
+    mk = os.path.join(ROOT, "gles-cores/h700/makefile")
     ym = re.search(r"^yabasanshiro_HASH\s*=\s*(\S+)", open(mk).read(), re.M)
     if ym and ym.group(1) != load_lock().get("YABAUSE_SHA"):
         print(f"warning: yabasanshiro_HASH ({ym.group(1)[:7]}) != "

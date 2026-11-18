@@ -21,7 +21,7 @@ options, savestates, resume and shaders while running the cores above.
 |---|---|
 | Platform | `h700` only (the three core pins were chosen for this SoC) |
 | Status | experimental; developed against an RGSP, device testing scheduled |
-| Distribution | one Tools pak (`Tools/h700/Minarch GL.pak`); it installs the cores into `Emus/h700/` and can restore stock at any time |
+| Distribution | one Tools pak (`Tools/h700/MinarchGL Installer.pak`); it installs the cores into `Emus/h700/` and can restore stock at any time |
 | Upstream | pinned overlay on [LoveRetro/NextUI](https://github.com/LoveRetro/NextUI), see `upstream.lock` |
 
 ## Not official
@@ -40,18 +40,18 @@ reviewed and tested on device by a human. Every test we rely on is a real
 ```
 workspace/                  # the slice: paths identical to NextUI's tree
 ├── all/minarch-gl/         #   frontend overlay (27 files; 12 of them replace upstream files)
-├── all/minarch-switch/     #   the Tools-pak UI: installs/removes the frontend + cores
+├── all/minarch-gl-installer/     #   the Tools-pak UI: installs/removes the frontend + cores
 └── h700/cores/makefile     #   the three cores we build (flycast, mupen64plus_next, yabasanshiro)
-paks/MinarchGL/             #   the one pak we ship: switcher + frontend + cores (payload/)
-paks/LIBRETRO_*/            #   the core paks the switcher installs into Emus/h700
+paks/MinarchGL/             #   the one pak we ship: installer + frontend + cores (payload/)
+paks/LIBRETRO_*/            #   the core paks the installer installs into Emus/h700
 tools/                      #   base/build/diff/sync helpers
 overlay.map                 #   which repo files override which upstream file
 upstream.lock               #   pinned NextUI sha + toolchain digest + yabause sha
 docs/UPSTREAM-SYNC.md       #   how upstream changes are merged
-docs/SWITCHER.md            #   how the frontend switch works and how to undo it
+docs/INSTALLER.md            #   how the installer works and how to undo it
 ```
 
-Nothing in `workspace/` outside `all/minarch-gl/` and `all/minarch-switch/` is
+Nothing in `workspace/` outside `all/minarch-gl/` and `all/minarch-gl-installer/` is
 copied upstream code: the build assembles NextUI's tree from a pinned tarball and
 overlays `workspace/` on top. Everything else in the base tree (menus, input,
 rewind, RetroAchievements, core build machinery) is inherited unchanged.
@@ -62,7 +62,7 @@ Prerequisites: `docker`, `git`, `curl`, `zip` or `bsdtar`, ~2 GB free.
 
 ```sh
 make build            # frontend only          -> dist/minarch-gl.elf
-make cores            # + switcher + cores     -> dist/Minarch.GL.pak.zip
+make cores            # + installer + cores     -> dist/MinarchGL.Installer.pak.zip
 make check            # upstream drift report (no writes)
 make diff             # patches of our overrides vs the pinned base (review)
 ```
@@ -70,7 +70,7 @@ make diff             # patches of our overrides vs the pinned base (review)
 The build:
 1. extracts NextUI at `BASE_SHA` (cached under `.cache/`),
 2. copies it to `build/tree` and overlays `workspace/`,
-3. builds `workspace/all/minarch-gl` and `workspace/all/minarch-switch` inside
+3. builds `workspace/all/minarch-gl` and `installer` inside
    the pinned toolchain image,
 4. optionally builds the three cores and assembles the pak.
 
@@ -82,14 +82,16 @@ reproducible from (base sha, overlay commit, toolchain digest).
 One pak, and it is a *tool* pak — installing it changes nothing by itself:
 
 ```
-unzip Minarch.GL.pak.zip into Tools/h700/      # -> /Tools/h700/Minarch GL.pak/
+unzip MinarchGL.Installer.pak.zip into Tools/h700/   # -> /Tools/h700/MinarchGL Installer.pak/
 ```
 
-Then open **Tools → Minarch GL** and choose **Enable minarch-gl**. That single
-action backs up the stock frontend, installs `minarch-gl`, and puts the three
-core paks into `Emus/h700/`; **Restore stock minarch** undoes it (the core paks
-are hidden again, not deleted). Nothing under `.system` is touched until you
-press Enable. See [docs/SWITCHER.md](docs/SWITCHER.md) for the exact mechanics.
+Then open **Tools → MinarchGL Installer** and choose **Enable MinarchGL**. That
+single action backs up the stock frontend, installs `minarch-gl`, and puts the
+three core paks into `Emus/h700/`; the same entry turns into **Disable
+MinarchGL** and undoes it (the core paks are hidden again, not deleted). Nothing
+under `.system` is touched until you press Enable. **Status** shows what is
+installed, the pin behind each core pak, and where its ROM folders are. See
+[docs/INSTALLER.md](docs/INSTALLER.md) for the exact mechanics.
 
 ROM folders use the tag of the core pak that the tool installs:
 
