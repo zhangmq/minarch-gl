@@ -38,23 +38,22 @@ reviewed and tested on device by a human. Every test we rely on is a real
 ## What is in here
 
 ```
-workspace/                  # the slice: paths identical to NextUI's tree
-├── all/minarch-gl/         #   frontend overlay (27 files; 12 of them replace upstream files)
-├── all/minarch-gl-installer/     #   the Tools-pak UI: installs/removes the frontend + cores
-└── h700/cores/makefile     #   the three cores we build (flycast, mupen64plus_next, yabasanshiro)
-paks/MinarchGL/             #   the one pak we ship: installer + frontend + cores (payload/)
-paks/LIBRETRO_*/            #   the core paks the installer installs into Emus/h700
-tools/                      #   base/build/diff/sync helpers
-overlay.map                 #   which repo files override which upstream file
-upstream.lock               #   pinned NextUI sha + toolchain digest + yabause sha
-docs/UPSTREAM-SYNC.md       #   how upstream changes are merged
-docs/INSTALLER.md            #   how the installer works and how to undo it
+installer/                   # the Tools-pak app (standalone; not an overlay)
+gles-cores/<plat>/           # core pins, CMake toolchain, GL headers per SoC (h700 today)
+workspace/                   # only files that replace a NextUI file, at their NextUI path
+├── all/minarch-gl/          #   the frontend overlay
+└── h700/platform/platform.c #   external-pad overlay (until NextUI#881 lands)
+paks/MinarchGL/              # the installer pak template
+paks/LIBRETRO_*/             # the core pak templates it installs into Emus/h700
+tools/                       # base/build/diff/sync helpers
+overlay.map                  # which repo files override which upstream file
+upstream.lock                # pinned NextUI sha + toolchain digest + yaba sha
 ```
 
-Nothing in `workspace/` outside `all/minarch-gl/` and `all/minarch-gl-installer/` is
-copied upstream code: the build assembles NextUI's tree from a pinned tarball and
-overlays `workspace/` on top. Everything else in the base tree (menus, input,
-rewind, RetroAchievements, core build machinery) is inherited unchanged.
+The build assembles NextUI's tree from a pinned tarball and overlays `workspace/`
+on top, so everything outside `workspace/` is ours alone and everything else in
+the base tree (menus, input, rewind, RetroAchievements, core build machinery) is
+inherited unchanged. Design and working notes are kept outside this repository.
 
 ## Build
 
@@ -90,8 +89,7 @@ single action backs up the stock frontend, installs `minarch-gl`, and puts the
 three core paks into `Emus/h700/`; the same entry turns into **Disable
 MinarchGL** and undoes it (the core paks are hidden again, not deleted). Nothing
 under `.system` is touched until you press Enable. **Status** shows what is
-installed, the pin behind each core pak, and where its ROM folders are. See
-[docs/INSTALLER.md](docs/INSTALLER.md) for the exact mechanics.
+installed, the pin behind each core pak, and where its ROM folders are.
 
 ROM folders use the tag of the core pak that the tool installs:
 
@@ -115,6 +113,4 @@ a tag. `LIBRETRO_FLYCAST` also covers Dreamcast and Naomi with a single pak.
 
 `overlay.map` lists the 12 files that are forks of upstream files; they are
 merged three-way on every bump (`tools/sync.py merge --to <sha>`). Everything
-else changed upstream arrives for free through the assembled tree. The policy,
-the bump checklist and the known traps are in
-[docs/UPSTREAM-SYNC.md](docs/UPSTREAM-SYNC.md).
+else changed upstream arrives for free through the assembled tree.
