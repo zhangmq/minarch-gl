@@ -1,0 +1,58 @@
+#!/bin/sh
+# MinarchGL full uninstall -- shipped as MinarchGL.Uninstall.pakz.
+#
+# Put the .pakz at the card root and start NextUI: the boot installer unpacks it
+# at the card root and runs this script before nextui.elf, so this is the one
+# place that can remove the installer pak itself.  It undoes exactly what the
+# installer did, and nothing else:
+#
+#   * put the stock frontend back, but only if our build is the one running --
+#     with no stock copy to restore it leaves the card a working frontend
+#     instead of an empty .system/bin;
+#   * delete the core paks whose tag belongs to this project (the tags below are
+#     generated from gles-cores/<plat>/cores.list);
+#   * delete .userdata/<plat>/minarch-gl (the backups, the cache, the downloads);
+#   * delete the installer pak.
+#
+# ROMs, saves, BIOS files and every pak we do not own are left alone.  Running it
+# twice changes nothing.
+TAGS="@TAGS@"
+S="${SDCARD_PATH:-/mnt/SDCARD}"
+P="${PLATFORM:-h700}"
+STATE="$S/.userdata/$P/minarch-gl"
+BIN="$S/.system/$P/bin/minarch.elf"
+
+mkdir -p "$S/.userdata/$P/logs" 2>/dev/null
+LOG="$S/.userdata/$P/logs/minarch-gl-uninstall.txt"
+exec >> "$LOG" 2>&1
+echo "uninstall: starting $(date)"
+echo "uninstall: card $S platform $P"
+
+if [ -f "$STATE/minarch-gl.elf" ] && cmp -s "$BIN" "$STATE/minarch-gl.elf"; then
+	if [ -f "$STATE/minarch-stock.elf" ]; then
+		if cp -f "$STATE/minarch-stock.elf" "$BIN"; then
+			chmod 0755 "$BIN" 2>/dev/null
+			echo "uninstall: stock frontend restored"
+		else
+			echo "uninstall: FAILED to restore the stock frontend"
+		fi
+	else
+		echo "uninstall: stock copy missing; leaving $BIN alone"
+	fi
+fi
+
+for t in $TAGS; do
+	[ -d "$S/Emus/$P/$t.pak" ] || continue
+	if rm -rf "$S/Emus/$P/$t.pak"; then
+		echo "uninstall: removed Emus/$P/$t.pak"
+	else
+		echo "uninstall: FAILED to remove Emus/$P/$t.pak"
+	fi
+done
+
+rm -rf "$STATE" && echo "uninstall: removed .userdata/$P/minarch-gl"
+rm -rf "$S/Tools/$P/MinarchGL Installer.pak" && echo "uninstall: removed the installer pak"
+
+sync
+echo "uninstall: done"
+exit 0

@@ -1,18 +1,12 @@
 #!/bin/sh
-# minarch-gl core pak: Dreamcast and Naomi on the flycast libretro core.
+# flycast -- the same shape as NextUI's own Emus/<platform>/<TAG>.pak: the core
+# lives in this directory and the frontend is whatever `minarch.elf` resolves
+# to.  The MinarchGL Installer decides which build that is; this pak never
+# checks, so it cannot disagree with it.
 #
-# One tag covers both systems: put the ROMs in "Sega Dreamcast (LIBRETRO_FLYCAST)"
-# and "Sega Naomi (LIBRETRO_FLYCAST)".  Flycast detects the system from the
-# content, so a single pak (and a single copy of the 26 MB core) serves both;
-# this mirrors how NextUI's own paks share one tag across related folders.
-# BIOS files for both systems go in "Bios/LIBRETRO_FLYCAST/".
-#
-# No frontend is bundled here on purpose.  Every pak invokes the bare name
-# `minarch.elf`, which resolves through PATH to $SYSTEM_PATH/bin/minarch.elf --
-# the installer in Tools/h700/MinarchGL Installer.pak decides whether that is stock NextUI
-# or minarch-gl.  While stock is active the installer renames this pak to
-# *.pak.disabled (it carries the `minarch-gl-only` marker), because stock
-# minarch cannot drive a GLES core.
+# Dreamcast and Naomi share this one tag: Flycast detects the system from the
+# content.  ROMs go in "Roms/Sega Dreamcast (LIBRETRO_FLYCAST)" and
+# "Roms/Sega Naomi (LIBRETRO_FLYCAST)"; BIOS files in "Bios/LIBRETRO_FLYCAST/".
 
 EMU_EXE=flycast
 CORES_PATH=$(dirname "$0")
@@ -21,7 +15,6 @@ CORES_PATH=$(dirname "$0")
 
 EMU_TAG=$(basename "$(dirname "$0")" .pak)
 ROM="$1"
-export LD_LIBRARY_PATH="$CORES_PATH:$LD_LIBRARY_PATH"
 mkdir -p "$BIOS_PATH/$EMU_TAG"
 mkdir -p "$SAVES_PATH/$EMU_TAG"
 mkdir -p "$CHEATS_PATH/$EMU_TAG"

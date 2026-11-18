@@ -1,10 +1,16 @@
 #!/bin/sh
-# Assemble the build tree and build minarch-gl (and optionally the three cores
-# and the pak bundles).
+# Assemble the build tree, build minarch-gl, and stage what a release ships.
 #
-#   tools/build.sh                 # frontend only
-#   BUILD_CORES=1 tools/build.sh   # frontend + flycast/mupen64plus_next/yabasanshiro + paks
-#   BUILD_CORES=flycast tools/build.sh
+#   tools/build.sh                  # frontend only            -> dist/minarch-gl.elf
+#   BUILD_INSTALLER=1 tools/build.sh # + the installer          -> dist/minarch-gl-installer.elf
+#                                     and build/paks/MinarchGL Installer.pak/
+#   BUILD_CORES=1 tools/build.sh    # + flycast/mupen64plus_next/yabasanshiro
+#                                     and build/paks/<TAG>.pak/ for each
+#   BUILD_CORES=flycast ...         # one core only (partial staging; the release
+#                                   # script refuses a partial manifest unless asked)
+#
+# tools/release.sh turns the staged output into the assets of one release; this
+# script only compiles and arranges files.
 #
 # Layout: the base tree is extracted under .cache/base/<sha>, copied to
 # build/tree, and this repository's workspace/ is overlaid on top of it.  The
@@ -14,10 +20,12 @@ set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/upstream.lock"
+. "$ROOT/tools/lib.sh"
 
 IMG="$TOOLCHAIN_IMAGE@$TOOLCHAIN_DIGEST"
 TREE="$ROOT/build/tree"
 DIST="$ROOT/dist"
+PAKS="$ROOT/build/paks"
 CORE_CACHE="$ROOT/.cache/cores"
 DEPS_CACHE="$ROOT/.cache/frontend-deps"
 ALL_CORES="flycast mupen64plus_next yabasanshiro"
@@ -26,23 +34,12 @@ ALL_CORES="flycast mupen64plus_next yabasanshiro"
 # they are not part of the workspace overlay.  h700 is the only platform today.
 CORES_PLATFORM=h700
 CORES_MK="$ROOT/gles-cores/$CORES_PLATFORM/makefile"
-
-say() { printf '\n== %s\n' "$*" >&2; }
-die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+# The core table: tag, core name and the ROM folders each tag owns.  Release
+# manifests and the pak staging both read it, so the three cannot drift.
+CORES_LIST="$ROOT/gles-cores/$CORES_PLATFORM/cores.list"
 
 command -v docker >/dev/null || die "docker is required (toolchain image $IMG)"
 command -v git >/dev/null || die "git is required (core source pins)"
-
-# Pak archives are plain zips; `zip` is the documented tool but bsdtar writes an
-# equivalent archive (same relative paths, unix modes preserved -- launch.sh must
-# stay executable when the pak is unzipped on the device).
-if command -v zip >/dev/null; then
-	zipdir() { zip -qr "$1" "$2"; }
-elif command -v bsdtar >/dev/null; then
-	zipdir() { bsdtar -a -cf "$1" "$2"; }
-else
-	die "need zip or bsdtar to build the pak archives"
-fi
 
 say "base tree ($BASE_SHA)"
 BASE=$(sh "$ROOT/tools/base.sh")
@@ -129,19 +126,41 @@ mkdir -p "$DIST"
 cp -f "$TREE/workspace/all/minarch-gl/build/h700/minarch-gl.elf" "$DIST/minarch-gl.elf"
 echo "frontend: $DIST/minarch-gl.elf ($(md5sum "$DIST/minarch-gl.elf" | cut -d' ' -f1))" >&2
 
-if [ -z "${BUILD_CORES:-}" ]; then
-	say "skipping cores (set BUILD_CORES=1 to build the cores and the pak)"
+if [ -z "${BUILD_INSTALLER:-}" ] && [ -z "${BUILD_CORES:-}" ]; then
+	say "skipping the installer and cores (set BUILD_INSTALLER=1 or BUILD_CORES=1)"
 	exit 0
 fi
 
-# The installer only ships inside the pak, so it is built with the pak.  It
-# lives outside workspace/ in this repository (it is a standalone pak app, not
-# an overlay of a NextUI file); the build tree keeps NextUI's layout, so it is
+# The installer only ships inside the pak, so it is built with it.  It lives
+# outside workspace/ in this repository (it is a standalone pak app, not an
+# overlay of a NextUI file); the build tree keeps NextUI's layout, so it is
 # copied to workspace/installer and built from there.
 say "building minarch-gl-installer"
 rm -rf "$TREE/workspace/installer"
 cp -a "$ROOT/installer" "$TREE/workspace/installer"
 run 'cd /workspace/installer && make'
+cp -f "$TREE/workspace/installer/build/h700/minarch-gl-installer.elf" "$DIST/minarch-gl-installer.elf"
+echo "installer: $DIST/minarch-gl-installer.elf ($(md5sum "$DIST/minarch-gl-installer.elf" | cut -d' ' -f1))" >&2
+
+# The lite installer pak: the tool and nothing else.  Everything it installs
+# comes from a release, so this is what the store (or a side-load) needs -- and
+# the only thing that has to be re-published when a core or the frontend
+# changes.
+say "staging the MinarchGL Installer pak"
+installer_pak="$PAKS/MinarchGL Installer.pak"
+rm -rf "$installer_pak"
+mkdir -p "$installer_pak"
+cp -a "$ROOT/paks/MinarchGL/." "$installer_pak/"
+cp -f "$DIST/minarch-gl-installer.elf" "$installer_pak/minarch-gl-installer.elf"
+cp -f "$ROOT/LICENSE" "$ROOT/NOTICE" "$installer_pak/"
+# A checkout that lost the exec bit (zip round-trip, copy from another OS) would
+# otherwise ship a pak that cannot be launched; make the bits explicit.
+chmod 0755 "$installer_pak/launch.sh" "$installer_pak/minarch-gl-installer.elf"
+
+if [ -z "${BUILD_CORES:-}" ]; then
+	say "skipping cores (set BUILD_CORES=1 to build the cores)"
+	exit 0
+fi
 
 if [ "$BUILD_CORES" = "1" ]; then
 	CORES="$ALL_CORES"
@@ -249,58 +268,37 @@ for c in $CORES; do
 	run "cd /workspace && CORE=$c make core"
 done
 
-say "assembling the Minarch GL pak"
-mkdir -p "$DIST"
-stage="$ROOT/build/paks/MinarchGL Installer.pak"
-rm -rf "$stage"
-mkdir -p "$stage/payload"
-cp -a "$ROOT/paks/MinarchGL/." "$stage/"
-cp -f "$TREE/workspace/installer/build/h700/minarch-gl-installer.elf" "$stage/minarch-gl-installer.elf"
-cp -f "$DIST/minarch-gl.elf" "$stage/payload/minarch-gl.elf"
-# Read back by the installer's Status screen (and copied next to the installed
-# binary), so a card can say which build of the frontend it is running.
-printf '%s\n' "$(date +%Y.%m.%d)" > "$stage/payload/minarch-gl.version"
-# A checkout that lost the exec bit (zip round-trip, copy from another OS) would
-# otherwise ship a pak that cannot be launched; make the bits explicit.
-chmod 0755 "$stage/launch.sh" "$stage/minarch-gl-installer.elf"
-
-# The core paks ride inside the tool pak: the installer installs them into
-# Emus/h700 when the user enables GL, so the frontend and the cores it needs
-# cannot be installed separately or drift out of step.
-for c in $CORES; do
-	case "$c" in
-		flycast) tag=LIBRETRO_FLYCAST ;;          # Dreamcast + Naomi share one tag
-		mupen64plus_next) tag=LIBRETRO_MUPEN64PLUS ;;
-		yabasanshiro) tag=LIBRETRO_YABASANSHIRO ;;
-		*) die "no pak tag for core $c" ;;
-	esac
-	core_so="$TREE/workspace/$CORES_PLATFORM/cores/output/${c}_libretro.so"
-	[ -f "$core_so" ] || die "missing $core_so (core build failed?)"
+# One flat pak per core, exactly like NextUI's own Emus/<platform>/<TAG>.pak
+# (launch.sh + default.cfg + the .so), plus the `version` file this project adds
+# so the installer can tell which build is installed.  tools/release.sh packs
+# these into <TAG>_<platform>.pak.tar.gz.
+say "staging core paks"
+while read -r tag core folders; do
+	case "$tag" in LIBRETRO_*) ;; *) continue ;; esac
+	case " $CORES " in *" $core "*) ;; *) continue ;; esac
 	src="$ROOT/paks/$tag"
 	[ -d "$src" ] || die "missing pak template $src"
-	dst="$stage/payload/$tag.pak"
-	cp -a "$src" "$dst"
-	cp -f "$core_so" "$dst/${c}_libretro.so"
+	core_so="$TREE/workspace/$CORES_PLATFORM/cores/output/${core}_libretro.so"
+	[ -f "$core_so" ] || die "missing $core_so (core build failed?)"
+	dst="$PAKS/$tag.pak"
+	rm -rf "$dst"
+	mkdir -p "$dst"
+	cp -a "$src/." "$dst/"
+	cp -f "$core_so" "$dst/${core}_libretro.so"
 	chmod 0755 "$dst/launch.sh"
-	# What the Status screen shows next to each core: the core name and the pin
-	# it was built from.  Written here, at packaging time, because it is the only
-	# place that knows both.
-	printf '%s %s\n' "$c" "$(git -C "$CORE_CACHE/$c" rev-parse --short=8 HEAD 2>/dev/null || echo unknown)" \
-		> "$dst/version"
+	# What the installer compares against the manifest: the core name and the
+	# commit it was built from.  Written at packaging time because this is the
+	# only place that knows both.
+	printf '%s %s\n' "$core" "$(short_pin "$(pin "$core" HASH)")" > "$dst/version"
 	# A pak is a binary distribution: the frontend half is PolyForm
 	# Noncommercial (LICENSE + NOTICE), the core half is GPLv2 and ships its
 	# own licence text.  The pins/source links live in NOTICE.
 	cp -f "$ROOT/LICENSE" "$ROOT/NOTICE" "$dst/"
-	core_lic="$CORE_CACHE/$c/LICENSE"
-	[ -f "$core_lic" ] || die "missing $core_lic (licence text for $c)"
-	cp -f "$core_lic" "$dst/LICENSE-$c"
-	echo "pak payload: $tag.pak <- $c" >&2
-done
-cp -f "$ROOT/LICENSE" "$ROOT/NOTICE" "$stage/"
-
-rm -f "$DIST/MinarchGL.Installer.pak.zip"
-(cd "$ROOT/build/paks" && zipdir "$DIST/MinarchGL.Installer.pak.zip" "MinarchGL Installer.pak")
-echo "pak: $DIST/MinarchGL.Installer.pak.zip" >&2
+	core_lic="$CORE_CACHE/$core/LICENSE"
+	[ -f "$core_lic" ] || die "missing $core_lic (licence text for $core)"
+	cp -f "$core_lic" "$dst/LICENSE-$core"
+	echo "staged: build/paks/$tag.pak <- $core $(short_pin "$(pin "$core" HASH)")" >&2
+done < "$CORES_LIST"
 
 say "done"
-ls -l "$DIST"
+ls -l "$DIST" "$PAKS"

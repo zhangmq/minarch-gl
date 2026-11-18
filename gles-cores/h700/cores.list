@@ -1,0 +1,22 @@
+# minarch-gl core list (h700)
+#
+# One line per core pak: <tag>  <core name>  <default ROM folders, ";" separated>
+#
+# The tag is the pak directory name (Emus/<plat>/<TAG>.pak) and the namespace the
+# installer owns; the core name is the <name>_libretro.so inside it and the first
+# field of the pak's `version` file.
+#
+# tools/release.sh turns this table plus the pins in gles-cores/<plat>/makefile
+# into core-list.json, the manifest the installer reads.  Cores are only ever
+# added here: a core that stops being maintained keeps its line and its pin, so
+# an installed copy stays recognisable and uninstallable.
+#
+# BIOS is not listed here: every core gets Bios/<TAG>/ (NextUI's convention, and
+# what minarch hands to the core as its system directory), and how a core lays
+# out the files inside it is the core's own business -- see the core's libretro
+# documentation.  The installer only creates the empty tag directory.
+#
+# tag                      core                default ROM folders
+LIBRETRO_FLYCAST           flycast             Sega Dreamcast;Sega Naomi
+LIBRETRO_MUPEN64PLUS       mupen64plus_next    Nintendo 64
+LIBRETRO_YABASANSHIRO      yabasanshiro        Sega Saturn;Sega Titan Video
