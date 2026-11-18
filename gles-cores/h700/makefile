@@ -91,6 +91,23 @@ yabasanshiro_CORE = build-h700/yabasanshiro_libretro.so
 # gcc 13) and run it into the staged dependency tree.  GCC_VERSION=8 matches the
 # image's 8.3: the engine picks <experimental/filesystem> below gcc 9, and
 # -lstdc++fs is what resolves those symbols.
+# yabasanshiro's tuning: the toolchain's MGL_TUNE, spelled out per core so one
+# flag can be flipped for an A/B without touching the other cores.
+#
+# yaba does NOT use -ffast-math (2026-11-19).  With it, Daytona USA's demo
+# mountain texture shows a radial artefact; without it the texture is correct.
+# Everything else stays: -O3, the A53 tuning, -fno-strict-aliasing.  The other
+# two cores keep their own flags (all three used to share MGL_TUNE).  Both yaba
+# variants link libmali directly instead of the libEGL shim (which exports no
+# symbols on this SoC).
+#
+# The rest of the bundle was not bisected: if the lost float throughput ever
+# matters, try -ffast-math with -fno-reciprocal-math / -fno-finite-math-only
+# first -- the artefact looks like a reciprocal/rounding change on the big
+# textured quads rather than a NaN-handling one.
+yaba_flags = -O3 -DNDEBUG -fomit-frame-pointer -fno-strict-aliasing \
+	-march=armv8-a+crc+fp+simd -mcpu=cortex-a53 -mtune=cortex-a53 -D_GNU_SOURCE
+
 yabasanshiro_MAKE = rm -rf deps build-h700 && \
 	cp -a /workspace/h700/cores/yaba-deps deps && \
 	mkdir -p deps/musashi build-h700/.tools && \
@@ -102,7 +119,8 @@ yabasanshiro_MAKE = rm -rf deps build-h700 && \
 		-DYAB_DEPS_CACHE=$$PWD/deps \
 		-DH700_DEPS=/workspace/h700/cores/h700-deps \
 		-DCMAKE_CXX_STANDARD=17 -DCMAKE_CXX_STANDARD_REQUIRED=ON \
-		-DCMAKE_CXX_STANDARD_LIBRARIES=-lstdc++fs && \
+		-DCMAKE_CXX_STANDARD_LIBRARIES=-lstdc++fs \
+		-DCMAKE_C_FLAGS="$(yaba_flags)" -DCMAKE_CXX_FLAGS="$(yaba_flags)" && \
 	cmake --build build-h700 --parallel 4 --target yabasanshiro_libretro #
 # No submodules are needed: libchdr/zlib come from the staged cache and the
 # only entry left in the core's .gitmodules is ext/eigen, which the libretro

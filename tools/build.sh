@@ -214,6 +214,17 @@ stage_core_deps() {
 	rm -rf "$TREE/workspace/$CORES_PLATFORM/cores/h700-deps"
 	mkdir -p "$TREE/workspace/$CORES_PLATFORM/cores/h700-deps"
 	cp -a "$gl/lib" "$TREE/workspace/$CORES_PLATFORM/cores/h700-deps/lib"
+	# The H700 port's CMakeLists links ${H700_DEPS}/lib/libEGL.so.1 *and*
+	# libmali.so.0.  On this SoC libEGL.so.1 is a 4 KB shim that exports no
+	# symbols at all -- every egl*/gl* entry point lives in libmali.so.0, and
+	# the core imports no egl* symbol -- so the only thing that entry adds is a
+	# DT_NEEDED record.  Point it at libmali, so the core links the driver
+	# directly, the way the hand-built core the user tested (Ubuntu gcc 12,
+	# NEEDED libmali alone) does; with the libEGL entry the yaba VDP output
+	# showed a radial artefact on Daytona USA's mountain texture (2026-11-19).
+	# The symlink keeps the CMakeLists' absolute path valid, and the linker
+	# reads libmali's SONAME, so the duplicate entry collapses into one.
+	ln -sf libmali.so.0 "$TREE/workspace/$CORES_PLATFORM/cores/h700-deps/lib/libEGL.so.1"
 	# The core's CMakeLists adds ${H700_DEPS}/include and expects GLES3/EGL
 	# headers there; the image sysroot has most of them but not GLES3/gl3ext.h
 	# (nor does the vendor dir), so our copy of that one header is overlaid on

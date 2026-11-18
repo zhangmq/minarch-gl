@@ -27,17 +27,24 @@ set(CMAKE_CXX_COMPILER ${MGL_CROSS}/bin/aarch64-nextui-linux-gnu-g++)
 set(CMAKE_ASM_COMPILER ${MGL_CROSS}/bin/aarch64-nextui-linux-gnu-gcc)
 set(CMAKE_SYSROOT ${MGL_SYSROOT})
 
-# The H700 is an in-order Cortex-A53, so -mtune is not cosmetic; the emulators
-# are float-heavy, which is why -ffast-math is used here and in the flycast and
-# mupen64plus-next entries.  Glibc 2.28 is the image's sysroot: keeping the
-# binary on it is what makes the pak run on any current BaseOS.
-set(MGL_TUNE "-O3 -DNDEBUG -fomit-frame-pointer -ffast-math -fno-strict-aliasing \
+# The H700 is an in-order Cortex-A53, so -mcpu/-mtune are not cosmetic.  Glibc
+# 2.28 is the image's sysroot: keeping the binary on it is what makes the pak run
+# on any current BaseOS.
+#
+# No -ffast-math here (2026-11-19): with it, yabasanshiro renders Daytona USA's
+# demo mountain texture with a radial artefact, and the measured cost of
+# dropping it is ~0.4% CPU per frame.  yaba passes its own -DCMAKE_C_FLAGS from
+# gles-cores/<plat>/makefile, so these INIT values are only the fallback; flycast
+# still carries -ffast-math in its own flag list (no artefacts seen there).
+set(MGL_TUNE "-O3 -DNDEBUG -fomit-frame-pointer -fno-strict-aliasing \
 -march=armv8-a+crc+fp+simd -mcpu=cortex-a53 -mtune=cortex-a53")
 
 set(CMAKE_C_FLAGS_INIT   "${MGL_TUNE} -D_GNU_SOURCE")
 set(CMAKE_CXX_FLAGS_INIT "${MGL_TUNE} -D_GNU_SOURCE")
 set(CMAKE_ASM_FLAGS_INIT "-march=armv8-a+crc+fp+simd -mcpu=cortex-a53 -mtune=cortex-a53")
-set(CMAKE_SHARED_LINKER_FLAGS_INIT "-Wl,--allow-shlib-undefined")
+# No CMAKE_SHARED_LINKER_FLAGS_INIT: a shared library may carry undefined
+# symbols anyway, so --allow-shlib-undefined only matters when linking an
+# executable against such a library (the standalone build, not this core).
 
 set(CMAKE_FIND_ROOT_PATH ${MGL_SYSROOT}/usr)
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
