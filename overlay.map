@@ -17,6 +17,9 @@ workspace/all/minarch-gl/ma_audio.c        workspace/all/minarch/ma_audio.c
 workspace/all/minarch-gl/ma_config.c       workspace/all/minarch/ma_config.c
 workspace/all/minarch-gl/ma_core.c         workspace/all/minarch/ma_core.c
 workspace/all/minarch-gl/ma_environment.c  workspace/all/minarch/ma_environment.c
+workspace/all/minarch-gl/ma_game.c         workspace/all/minarch/ma_game.c
+workspace/all/minarch-gl/ma_game.h         workspace/all/minarch/ma_game.h
+workspace/all/minarch-gl/ma_menu.c         workspace/all/minarch/ma_menu.c
 workspace/all/minarch-gl/ma_saves.c        workspace/all/minarch/ma_saves.c
 workspace/all/minarch-gl/ma_video.c        workspace/all/minarch/ma_video.c
 workspace/all/minarch-gl/ma_internal.h     workspace/all/minarch/ma_internal.h

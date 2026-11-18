@@ -313,10 +313,6 @@ enum {
 	// minarch-gl: switch the d-pad between its own buttons and the analog
 	// stick (for SKUs with no analog stick).  See ma_core.c.
 	SHORTCUT_TOGGLE_DPAD,
-	// minarch-gl: multi-disc games (the frontend has no disc menu; these are
-	// the whole disc UI).  MENU+L1 / MENU+R1 by default.  See ma_core.c.
-	SHORTCUT_PREV_DISC,
-	SHORTCUT_NEXT_DISC,
 	// Trimui only
 	SHORTCUT_TOGGLE_TURBO_A,
 	SHORTCUT_TOGGLE_TURBO_B,

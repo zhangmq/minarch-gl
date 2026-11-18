@@ -152,68 +152,12 @@ void dpad_policy_hotkey(void) {
 	if (m->mod) show_menu = 0;
 }
 
-/* ------------------------------------------------------------------------- *
- * Disc swapping for multi-disc games.
- *
- * minarch only *stores* the core's disk-control interface (ma_environment.c);
- * nothing ever called it, so a game that asks for "disc 2" could not be
- * satisfied.  These two shortcuts are the whole disc UI: Previous/Next Disc
- * (MENU+L1 / MENU+R1 by default), driving the interface with RetroArch's
- * sequence -- eject, set the index, close -- and reporting the result on the
- * OSD, because the user has no other way to see which disc is in.
- * ------------------------------------------------------------------------- */
-static void disc_notify(unsigned idx, unsigned num, int ok) {
-	char msg[64];
-	if (num == 0)
-		snprintf(msg, sizeof msg, "No discs");
-	else if (num == 1)
-		snprintf(msg, sizeof msg, "Single disc");
-	else
-		snprintf(msg, sizeof msg, "Disc %u/%u%s", idx + 1, num, ok ? "" : " (failed)");
-	Notification_push(NOTIFICATION_SETTING, msg, NULL);
-}
-
-static void disc_swap(int delta) {
-	if (!disk_control_ext.get_num_images || !disk_control_ext.set_image_index) {
-		Notification_push(NOTIFICATION_SETTING, "Disc control unavailable", NULL);
-		return;
-	}
-	unsigned num = disk_control_ext.get_num_images();
-	if (num < 2) { disc_notify(0, num, 1); return; }
-
-	unsigned idx = disk_control_ext.get_image_index ? disk_control_ext.get_image_index() : 0;
-	if (idx >= num) idx = 0;
-	/* wrap around: a 2-disc game is usually a single next/prev press */
-	unsigned tgt = (unsigned)(((int)idx + delta + (int)num) % (int)num);
-
-	if (disk_control_ext.set_eject_state) disk_control_ext.set_eject_state(true);
-	int ok = disk_control_ext.set_image_index(tgt);
-	if (disk_control_ext.set_eject_state) disk_control_ext.set_eject_state(false);
-
-	LOG_info("disc: swap %u -> %u of %u (%s)\n", idx, tgt, num, ok ? "ok" : "failed");
-	disc_notify(tgt, num, ok);
-}
-
-void disc_shortcut_hotkey(void) {
-	static const int ids[2]   = { SHORTCUT_PREV_DISC, SHORTCUT_NEXT_DISC };
-	static const int delta[2] = { -1, +1 };
-	for (int i = 0; i < 2; i++) {
-		ButtonMapping *m = &config.shortcuts[ids[i]];
-		if (!m->name || m->local < 0) continue;                 // unbound
-		if (m->mod && !PAD_isPressed(BTN_MENU)) continue;
-		if (!PAD_justPressed(1 << m->local)) continue;
-		disc_swap(delta[i]);
-		if (m->mod) show_menu = 0;
-	}
-}
-
 /* Called right after EVERY input poll: the upstream poll callback owns the
  * Shortcuts table, but a core asking for EARLY polling (mupen with its threaded
  * renderer on) never calls it, so the run loop polls instead -- both paths must
  * dispatch these. */
 void ma_poll_hotkeys(void) {
 	dpad_policy_hotkey();
-	disc_shortcut_hotkey();
 }
 
 // The analog value the d-pad contributes (0 when this mode does not drive it).
