@@ -3114,7 +3114,16 @@ size_t SND_batchSamples(const SND_Frame *frames, size_t frame_count)
 		}
 		pthread_mutex_unlock(&audio_mutex);
 
-		total_consumed_frames += written_frames;
+		/* libretro's contract: this returns how many *input* frames the
+		 * frontend took, not how many it produced.  The ring holds resampled
+		 * output, and with ratio > 1 one input frame becomes more than one
+		 * output frame -- returning that count made mupen64plus-next subtract
+		 * more than it passed, underflow its own size_t and call back with
+		 * (size_t)-2 forever.  That is the Super Mario 64 hang: 100% CPU
+		 * inside retro_run, no video, no audio, ring indices frozen
+		 * (2026-11-19).  The input is consumed either way -- what could not be
+		 * written was dropped, as before -- so count the input chunk. */
+		total_consumed_frames += amount;
 		free(resampled.frames);
 	}
 
@@ -3244,7 +3253,16 @@ size_t SND_batchSamples_fixed_rate(const SND_Frame *frames, size_t frame_count)
 		}
 		pthread_mutex_unlock(&audio_mutex);
 
-		total_consumed_frames += written_frames;
+		/* libretro's contract: this returns how many *input* frames the
+		 * frontend took, not how many it produced.  The ring holds resampled
+		 * output, and with ratio > 1 one input frame becomes more than one
+		 * output frame -- returning that count made mupen64plus-next subtract
+		 * more than it passed, underflow its own size_t and call back with
+		 * (size_t)-2 forever.  That is the Super Mario 64 hang: 100% CPU
+		 * inside retro_run, no video, no audio, ring indices frozen
+		 * (2026-11-19).  The input is consumed either way -- what could not be
+		 * written was dropped, as before -- so count the input chunk. */
+		total_consumed_frames += amount;
 		free(resampled.frames);
 	}
 
