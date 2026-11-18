@@ -22,7 +22,7 @@ options, savestates, resume and shaders while running the cores above.
 | Platform | `h700` only (the three core pins were chosen for this SoC) |
 | Status | experimental; installer + frontend exercised on an RGSP (2026-11-19), game smoke tests pending |
 | Distribution | one small Tools pak (`Tools/h700/MinarchGL Installer.pak`, ~110 KB); the frontend and the cores are downloaded from this project's releases, and the tool can restore stock at any time |
-| Upstream | pinned overlay on [LoveRetro/NextUI](https://github.com/LoveRetro/NextUI), see `upstream.lock` |
+| Upstream | pinned overlay on [LoveRetro/NextUI](https://github.com/LoveRetro/NextUI) (`main`); base SHA and toolchain digest in `upstream.lock` |
 
 ## Not official
 
@@ -54,6 +54,42 @@ The build assembles NextUI's tree from a pinned tarball and overlays `workspace/
 on top, so everything outside `workspace/` is ours alone and everything else in
 the base tree (menus, input, rewind, RetroAchievements, core build machinery) is
 inherited unchanged. Design and working notes are kept outside this repository.
+
+## Cores
+
+Emulation comes from three libretro cores, each built from a pinned commit
+(`make cores`) and shipped as its own pak:
+
+| pak | core | source | ref | commit |
+|---|---|---|---|---|
+| `LIBRETRO_FLYCAST` | flycast | [flyinghead/flycast](https://github.com/flyinghead/flycast) | tag `v2.0` | `aa97a6d6` |
+| `LIBRETRO_MUPEN64PLUS` | mupen64plus_next | [libretro/mupen64plus-libretro-nx](https://github.com/libretro/mupen64plus-libretro-nx) | `master` | `6752836d` |
+| `LIBRETRO_YABASANSHIRO` | yabasanshiro | [zhangmq/yabasanshiro-pirry](https://github.com/zhangmq/yabasanshiro-pirry) | `h700-libretro` | `eb32d3f9` |
+
+The pins are the only version this project tracks: they live in
+`gles-cores/h700/makefile` (the Saturn one is mirrored in `upstream.lock`, which
+`tools/sync.py check` compares), and the installer's manifest is generated from
+them. Bumping a core is therefore a commit that changes a pin, not a rebuild of
+a moving branch.
+
+Why these sources:
+
+- **flycast** — flyinghead's repository, not `libretro/flycast`: that one is a
+  deprecated fork without the GLES renderer or the PVR message queue. `v2.0` is
+  the build picked for this SoC by the 2026-09 version sweep.
+- **mupen64plus-next** — the compatibility leader on H700-class hardware;
+  parallel-n64 was rejected because its LLE RDP is too heavy for the SoC. The
+  build forces the GLES3 renderer (`FORCE_GLES3=1`), the same hw-render path as
+  the other two.
+- **yabasanshiro** — our fork of pirrypirrypirry's 1.6.2 base, a single branch
+  (`h700-libretro`); its libretro port is CMake and is driven by our own
+  toolchain file. This is the only core source we maintain.
+
+`ref` is where the commit is easiest to find, not a branch the build follows:
+the build fetches the pin by SHA, so a pin that is older than the branch tip
+(and flycast's is, by years) builds exactly the pinned commit. Only
+yabasanshiro sets a branch override; the other two clone the default branch and
+then check out the SHA on top.
 
 ## Build
 
