@@ -197,7 +197,23 @@ stage_core_deps() {
 	mkdir -p "$TREE/workspace/$CORES_PLATFORM/cores"
 	cp -a "$ROOT/gles-cores/$CORES_PLATFORM/." "$TREE/workspace/$CORES_PLATFORM/cores/"
 	src="$CORE_CACHE/yaba-deps"
-	[ -d "$src" ] || die "missing $src (yabasanshiro's libchdr/zlib sources)"
+	# A fresh checkout (CI included) has no cache: fetch the two pins the core's
+	# own build-libretro.sh would clone, so the build is reproducible from the
+	# repository alone.
+	for dep in libchdr zlib; do
+		repo=$(pin yaba "${dep}_REPO")
+		hash=$(pin yaba "${dep}_HASH")
+		[ -n "$repo" ] && [ -n "$hash" ] || die "no yaba ${dep} pin in $CORES_MK"
+		if [ ! -d "$src/$dep/.git" ] ||
+		   [ "$(git -C "$src/$dep" rev-parse HEAD 2>/dev/null)" != "$hash" ]; then
+			say "cloning yaba-$dep @ $(short_pin "$hash")"
+			rm -rf "$src/$dep"
+			mkdir -p "$src"
+			git clone --depth 1 "$repo" "$src/$dep"
+			git -C "$src/$dep" fetch --depth 1 origin "$hash"
+			git -C "$src/$dep" checkout --detach "$hash"
+		fi
+	done
 	mkdir -p "$TREE/workspace/$CORES_PLATFORM/cores"
 	rm -rf "$TREE/workspace/$CORES_PLATFORM/cores/yaba-deps"
 	cp -a "$src" "$TREE/workspace/$CORES_PLATFORM/cores/yaba-deps"
@@ -205,15 +221,28 @@ stage_core_deps() {
 	gl="$CORE_CACHE/h700-deps"
 	if [ ! -f "$gl/lib/libmali.so.0" ] || [ ! -f "$gl/lib/libEGL.so.1" ]; then
 		gldeps=${GL_DEPS_SRC:-/home/zmq/projects/h700-deps}
-		[ -f "$gldeps/lib/libmali.so.0" ] ||
-			die "missing vendor GL libs: put libEGL.so.1 and libmali.so.0 in $gl/lib or set GL_DEPS_SRC"
-		mkdir -p "$gl/lib"
-		cp -f "$gldeps/lib/libEGL.so.1" "$gldeps/lib/libmali.so.0" "$gl/lib/"
-		chmod 0644 "$gl/lib/libmali.so.0" "$gl/lib/libEGL.so.1"
+		if [ -f "$gldeps/lib/libmali.so.0" ]; then
+			mkdir -p "$gl/lib"
+			cp -f "$gldeps/lib/libEGL.so.1" "$gldeps/lib/libmali.so.0" "$gl/lib/"
+			chmod 0644 "$gl/lib/libmali.so.0" "$gl/lib/libEGL.so.1"
+		fi
 	fi
 	rm -rf "$TREE/workspace/$CORES_PLATFORM/cores/h700-deps"
-	mkdir -p "$TREE/workspace/$CORES_PLATFORM/cores/h700-deps"
-	cp -a "$gl/lib" "$TREE/workspace/$CORES_PLATFORM/cores/h700-deps/lib"
+	mkdir -p "$TREE/workspace/$CORES_PLATFORM/cores/h700-deps/lib"
+	if [ -d "$gl/lib" ]; then
+		cp -a "$gl/lib/." "$TREE/workspace/$CORES_PLATFORM/cores/h700-deps/lib/"
+	fi
+	# The driver is a device blob and is not in the repository.  Linking only
+	# needs the SONAME (the core's gl* references stay undefined and are resolved
+	# by the device's libmali at run time), so a clean checkout -- CI -- gets a
+	# stub with just that name.  --no-as-needed (in the core makefile) keeps the
+	# DT_NEEDED record even though the stub exports nothing.
+	if [ ! -f "$TREE/workspace/$CORES_PLATFORM/cores/h700-deps/lib/libmali.so.0" ]; then
+		say "no vendor libmali in $gl/lib: generating a link-time stub (the device provides the driver)"
+		run 'printf "int mgl_link_stub;\n" > /tmp/mgl-stub.c && \
+			aarch64-nextui-linux-gnu-gcc -shared -fPIC -Wl,-soname,libmali.so.0 \
+			-o /workspace/'"$CORES_PLATFORM"'/cores/h700-deps/lib/libmali.so.0 /tmp/mgl-stub.c'
+	fi
 	# The H700 port's CMakeLists links ${H700_DEPS}/lib/libEGL.so.1 *and*
 	# libmali.so.0.  On this SoC libEGL.so.1 is a 4 KB shim that exports no
 	# symbols at all -- every egl*/gl* entry point lives in libmali.so.0, and

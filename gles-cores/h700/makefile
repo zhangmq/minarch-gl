@@ -120,6 +120,7 @@ yabasanshiro_MAKE = rm -rf deps build-h700 && \
 		-DH700_DEPS=/workspace/h700/cores/h700-deps \
 		-DCMAKE_CXX_STANDARD=17 -DCMAKE_CXX_STANDARD_REQUIRED=ON \
 		-DCMAKE_CXX_STANDARD_LIBRARIES=-lstdc++fs \
+		-DCMAKE_SHARED_LINKER_FLAGS="-Wl,--no-as-needed" \
 		-DCMAKE_C_FLAGS="$(yaba_flags)" -DCMAKE_CXX_FLAGS="$(yaba_flags)" && \
 	cmake --build build-h700 --parallel 4 --target yabasanshiro_libretro #
 # No submodules are needed: libchdr/zlib come from the staged cache and the
@@ -127,6 +128,13 @@ yabasanshiro_MAKE = rm -rf deps build-h700 && \
 # build does not use.  Leaving this empty is safe because tools/build.sh always
 # pre-clones the source, so the template's own clone/submodule rule is skipped.
 yabasanshiro_SUBMODULES =
+# The libretro port links libchdr and zlib, which its own build-libretro.sh
+# clones; here they are staged from .cache so the build is hermetic.  When the
+# cache is empty (a fresh checkout, CI) tools/build.sh clones these pins.
+yaba_libchdr_REPO = https://github.com/devmiyax/libchdr
+yaba_libchdr_HASH = 074ff1614f2a685f2b5a95b0e788bff6297d5680
+yaba_zlib_REPO = https://github.com/madler/zlib
+yaba_zlib_HASH = 50893291621658f355bc5b4d450a8d06a563053d
 
 ###############################
 

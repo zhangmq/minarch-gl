@@ -1,0 +1,90 @@
+# Build every release asset on GitHub's runners and publish it.
+#
+# Trigger: pushing a tag (v*) or a manual run with an existing tag.  The
+# toolchain image is public, so no registry credentials are needed; the cores
+# are built from the pins in gles-cores/<plat>/makefile and the yaba dependency
+# pins are cloned on demand, so a runner needs no local cache to start.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to publish (e.g. v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libssl-dev zip
+
+      - name: Toolchain image
+        run: |
+          . ./upstream.lock
+          docker pull "$TOOLCHAIN_IMAGE@$TOOLCHAIN_DIGEST"
+
+      # The first run clones NextUI, the frontend dependencies and the three
+      # core repositories; later runs start from this cache.  Keyed on every pin
+      # so a bump rebuilds from scratch.
+      - name: Cache sources
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: mgl-sources-${{ runner.os }}-${{ hashFiles('upstream.lock', 'gles-cores/h700/makefile', 'gles-cores/h700/cores.list') }}
+          restore-keys: mgl-sources-${{ runner.os }}-
+
+      - name: Host tests
+        run: make test
+
+      - name: Build release assets
+        run: make release
+
+      - name: Verify the packaged release
+        run: |
+          cd dist
+          sha256sum -c SHA256SUMS
+          cd ..
+          make test
+
+      - name: Upload artifacts (kept even if publishing fails)
+        uses: actions/upload-artifact@v4
+        with:
+          name: minarch-gl-dist
+          path: dist/
+          if-no-files-found: error
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          name: ${{ inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/core-list.json
+            dist/SHA256SUMS
+            dist/minarch-gl_h700.elf
+            dist/LIBRETRO_FLYCAST_h700.pak.tar.gz
+            dist/LIBRETRO_MUPEN64PLUS_h700.pak.tar.gz
+            dist/LIBRETRO_YABASANSHIRO_h700.pak.tar.gz
+            dist/MinarchGL.Installer.pak.zip
+            dist/MinarchGL.Installer.pakz
+            dist/MinarchGL.Full_h700.pakz
+            dist/MinarchGL.Uninstall.pakz
