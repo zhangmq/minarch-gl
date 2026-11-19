@@ -6,8 +6,9 @@
 // and what the latest release offers:
 //
 //   install page  nothing installed yet, or the card needs a repair
-//   main page     installed: enable/disable, update, status, uninstall
-//   status page   what the card has, and one row per core
+//   main page     installed: enable/disable, update, cores, status, uninstall
+//   cores page    one row per core in the release list
+//   status page   what the card has: the frontend and the stock copy
 //   core page     install/update/uninstall one core, and its ROM folders
 //   done page     after an uninstall; only B leaves it, so a repeating Y cannot
 //                 land on the "install" row that appears underneath
@@ -30,13 +31,14 @@
 //   --core-remove <TAG>       remove one core pak
 //   --post-update             the no-UI update the .pakz post_install.sh runs
 //   --page <name>             open a screen directly
-//                             (install|main|status|core|done|message)
+//                             (install|main|cores|status|core|done|message)
 //                             for screenshots and layout checks on the device
 
 #include <cstdio>
 #include <cstring>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 extern "C" {
@@ -163,7 +165,7 @@ static int cli(const mgl::Paths &p, const mgl::Env &env, int argc, char *argv[])
 ///////////////////////////////////////////////////////////////////////////////
 // UI model
 
-enum class Screen { Install, Main, Status, Core, Done };
+enum class Screen { Install, Main, Cores, Status, Core, Done };
 
 // One row of a list screen.
 //
@@ -178,9 +180,12 @@ struct Row {
 	std::function<void()> open;
 	std::string openHint;     // shown as "A <hint>"
 	bool plain = false;
+	// A row that can be selected but has nothing to run: the read-only rows of
+	// the status page.  The cursor still moves onto it, A and Y stay inert.
+	bool focusable = false;
 };
 
-inline bool selectable(const Row &r) { return (bool)r.action || (bool)r.open; }
+inline bool selectable(const Row &r) { return (bool)r.action || (bool)r.open || r.focusable; }
 
 struct App {
 	mgl::Paths paths;
@@ -188,7 +193,6 @@ struct App {
 	mgl::Manifest manifest;
 	mgl::FrontendInfo frontend;
 	int coreIndex = 0;          // core page target
-	int statusRow = -1;         // status row the core page was opened from
 
 	Screen screen = Screen::Install;
 	std::vector<Row> rows;
@@ -199,6 +203,11 @@ struct App {
 	std::string busyText;
 	bool message = false;
 	std::string messageText;
+	// The one confirmation the tool has (deleting a ROM or BIOS folder): Y runs
+	// `confirmYes`, B cancels, and A is ignored so it cannot dismiss a warning.
+	bool confirm = false;
+	std::string confirmText;
+	std::function<void()> confirmYes;
 	bool doneFromCore = false;
 
 	int dirty = 1;
@@ -236,10 +245,7 @@ static int textWidth(TTF_Font *font, const std::string &text) {
 	return w;
 }
 
-static void drawHints(App &a, const char *key, const std::string &hint, bool withBack = true) {
-	auto pairs = std::vector<std::pair<std::string, std::string>>();
-	if (withBack) pairs.push_back({"B", "BACK"});
-	if (key && *key && !hint.empty()) pairs.push_back({key, hint});
+static void drawHintPairs(App &a, const std::vector<std::pair<std::string, std::string>> &pairs) {
 	char *arr[5] = {NULL, NULL, NULL, NULL, NULL};
 	for (size_t i = 0; i < pairs.size() && i < 2; i++) {
 		arr[i * 2] = (char *)pairs[i].first.c_str();
@@ -249,13 +255,20 @@ static void drawHints(App &a, const char *key, const std::string &hint, bool wit
 	GFX_blitButtonGroup(arr, pairs.size() > 1 ? 1 : 0, a.surf, 1);
 }
 
+static void drawHints(App &a, const char *key, const std::string &hint, bool withBack = true) {
+	auto pairs = std::vector<std::pair<std::string, std::string>>();
+	if (withBack) pairs.push_back({"B", "BACK"});
+	if (key && *key && !hint.empty()) pairs.push_back({key, hint});
+	drawHintPairs(a, pairs);
+}
+
 // The list screens, drawn the way NextUI draws its own lists.
 //
 // Two styles, and which one applies is a property of the page, not of the row:
 //
-//   pages with a value column (Status)  the framework's "fixed" rows: the
-//       selected row is a full-width accent bar, its label sits on a dark pill,
-//       and the value column carries the state.  font.tiny.
+//   pages with a value column (Cores, Status)  the framework's "fixed" rows:
+//       the selected row is a full-width accent bar, its label sits on a dark
+//       pill, and the value column carries the state.  font.tiny.
 //   pages without values (Main, Core, the install page)  the framework's "list"
 //       rows, as on NextUI's own menu and Settings root: the selected row is
 //       just a dark pill behind its label -- no accent bar, no value column.
@@ -265,7 +278,7 @@ static void drawHints(App &a, const char *key, const std::string &hint, bool wit
 // small caption font on the left edge and is never selected.
 static void drawRows(App &a) {
 	const SDL_Rect area = a.listRect;
-	const bool fixed = a.screen == Screen::Status;
+	const bool fixed = a.screen == Screen::Cores || a.screen == Screen::Status;
 	TTF_Font *item_font = fixed ? font.tiny : font.small;
 	const int x = area.x;
 	const int w = area.w;
@@ -397,6 +410,14 @@ static void drawMessage(App &a) {
 	drawHints(a, "A", "OKAY", false);
 }
 
+// The one confirmation in the tool (deleting a ROM or BIOS folder): the warning
+// replaces the screen, Y accepts, B goes back, A does nothing.
+static void drawConfirm(App &a) {
+	fillBackground(a);
+	drawMessageText(a, a.confirmText, font.medium, COLOR_WHITE);
+	drawHintPairs(a, {{"B", "CANCEL"}, {"Y", "DELETE"}});
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // screen contents
 
@@ -454,6 +475,25 @@ static void showResult(App &a, const std::string &text, Screen next) {
 	a.dirty = 1;
 }
 
+// Every network action starts here: one fresh manifest fetch, then the action
+// works from that copy.  There is no startup fetch any more, so a button press
+// is the only thing that talks to the release -- and the answer it gets is the
+// one it acts on, not a copy from a minute (or a launch) ago.
+static bool refreshManifest(App &a, const char *busyText) {
+	if (!a.env.online) return true;   // offline: work from the local copy
+	a.busy = true;
+	a.busyText = busyText;
+	render(a);
+	a.manifest = mgl::loadManifest(a.paths, a.env, true, progressOf(a));
+	a.busy = false;
+	a.frontend = mgl::frontendInfo(a.paths, a.manifest.latestGl);
+	if (!a.manifest.ok) {
+		showFailure(a, a.manifest.err.empty() ? "No release information." : a.manifest.err);
+		return false;
+	}
+	return true;
+}
+
 static std::string titleOf(const mgl::FrontendInfo &f) {
 	switch (f.state) {
 	case mgl::FrontendState::Enabled: return "enabled";
@@ -480,6 +520,19 @@ static void finishFrontendAction(App &a, const std::string &okText) {
 }
 
 static void doFrontendInstall(App &a, const char *okText) {
+	if (!refreshManifest(a, "Checking for updates...")) return;
+	if (a.manifest.latestGl.empty()) {
+		showFailure(a, "The release does not publish the frontend.");
+		return;
+	}
+	if (!a.frontend.gl.empty() && a.frontend.gl == a.manifest.latestGl) {
+		showResult(a, "Already up to date.", a.screen);
+		return;
+	}
+	if (!mgl::assetReachable(a.env, a.paths, a.paths.frontendAsset(), a.manifest.latestGl)) {
+		showFailure(a, "Online updates are off; no copy is cached.");
+		return;
+	}
 	a.busy = true;
 	a.busyText = "Working...";
 	render(a);
@@ -519,6 +572,30 @@ static void doDisable(App &a) {
 	go(a, Screen::Main);
 }
 
+// The online-updates switch: the only place the tool decides whether it may use
+// the network.  Turning it on checks right away; turning it off re-reads the
+// local copies so the rows stop advertising versions it cannot fetch.
+static void doToggleOnline(App &a) {
+	const bool on = !a.env.online;
+	if (!mgl::setOnlineUpdates(a.paths, on)) {
+		showFailure(a, "Cannot save the online-updates preference.");
+		return;
+	}
+	// The fetch policy lives inside the Env (its lambda captured it at startup),
+	// so flipping the flag alone would keep refusing http(s) until the next
+	// launch.  Rebuild the Env with the new policy as well.
+	a.env = mgl::defaultEnv(on);
+	a.busy = true;
+	a.busyText = on ? "Checking for updates..." : "Reading local data...";
+	render(a);
+	a.manifest = mgl::loadManifest(a.paths, a.env, true, progressOf(a));
+	a.busy = false;
+	a.frontend = mgl::frontendInfo(a.paths, a.manifest.latestGl);
+	// The toggle also lives on the setup page, which is the only page a card
+	// without a frontend has: come back to whichever page asked.
+	showResult(a, on ? "Online updates enabled." : "Online updates disabled.", a.screen);
+}
+
 static void doUninstallFrontend(App &a) {
 	a.busy = true;
 	a.busyText = "Working...";
@@ -528,7 +605,7 @@ static void doUninstallFrontend(App &a) {
 	if (!r.ok) { showFailure(a, r.err); return; }
 	a.frontend = mgl::frontendInfo(a.paths, a.manifest.latestGl);
 	a.doneFromCore = false;
-	a.messageText = "MinarchGL removed.";
+	a.messageText = "MinarchGL data cleaned.";
 	go(a, Screen::Done);
 }
 
@@ -539,11 +616,28 @@ static const mgl::CoreEntry &currentCore(App &a) {
 }
 
 static void doCoreInstall(App &a, const char *okText) {
-	const mgl::CoreEntry &e = currentCore(a);
+	const std::string tag = currentCore(a).tag;
+	if (tag.empty()) { showFailure(a, "No core selected."); return; }
+	if (!refreshManifest(a, "Checking for updates...")) return;
+	// The refreshed list may have moved or dropped the entry; follow it by tag.
+	const mgl::CoreEntry *e = a.manifest.list.find(tag);
+	if (!e) { showFailure(a, "The release no longer lists " + tag + "."); return; }
+	for (int i = 0; i < (int)a.manifest.list.cores.size(); i++) {
+		if (a.manifest.list.cores[i].tag == tag) { a.coreIndex = i; break; }
+	}
+	const mgl::CoreStatus s = mgl::coreStatus(a.paths, *e);
+	if (s.state == mgl::CoreState::Current) {
+		showResult(a, "Already up to date.", Screen::Core);
+		return;
+	}
+	if (!mgl::assetReachable(a.env, a.paths, e->file, e->sha256)) {
+		showFailure(a, "Online updates are off; no copy is cached.");
+		return;
+	}
 	a.busy = true;
 	a.busyText = "Working...";
 	render(a);
-	const mgl::Result r = mgl::installCore(a.paths, a.env, e, progressOf(a));
+	const mgl::Result r = mgl::installCore(a.paths, a.env, *e, progressOf(a));
 	a.busy = false;
 	if (!r.ok) { showFailure(a, r.err); return; }
 	showResult(a, okText, Screen::Core);
@@ -562,49 +656,113 @@ static void doCoreRemove(App &a) {
 	go(a, Screen::Done);
 }
 
-static void doCreateFolders(App &a) {
+static void doCreateBios(App &a) {
 	const mgl::CoreEntry &e = currentCore(a);
-	const mgl::Result r = mgl::createCoreFolders(a.paths, e);
+	const mgl::Result r = mgl::createBiosFolder(a.paths, e.tag);
 	if (!r.ok) { showFailure(a, r.err); return; }
-	showResult(a, "Folders created.", Screen::Core);
+	showResult(a, "Bios folder created.", Screen::Core);
+}
+
+static void doCreateRoms(App &a) {
+	const mgl::CoreEntry &e = currentCore(a);
+	const mgl::Result r = mgl::createRomFolders(a.paths, e);
+	if (!r.ok) { showFailure(a, r.err); return; }
+	showResult(a, "Roms folders created.", Screen::Core);
+}
+
+static void doDeleteRom(App &a, const std::string &name) {
+	const mgl::CoreEntry &e = currentCore(a);
+	a.busy = true;
+	a.busyText = "Deleting Roms/" + name + "...";
+	render(a);
+	const mgl::Result r = mgl::deleteRomFolder(a.paths, e.tag, name);
+	a.busy = false;
+	if (!r.ok) { showFailure(a, r.err); return; }
+	showResult(a, "Folder deleted.", Screen::Core);
+}
+
+static void doDeleteBios(App &a) {
+	const mgl::CoreEntry &e = currentCore(a);
+	a.busy = true;
+	a.busyText = "Deleting Bios/" + e.tag + "...";
+	render(a);
+	const mgl::Result r = mgl::deleteBiosFolder(a.paths, e.tag);
+	a.busy = false;
+	if (!r.ok) { showFailure(a, r.err); return; }
+	showResult(a, "Folder deleted.", Screen::Core);
+}
+
+// Ask before the one destructive action.  The caller passes the warning, so a
+// BIOS folder can say what its files are: both paths end up as a plain-text
+// screen with B CANCEL / Y DELETE, and A is deliberately inert.
+static void askDelete(App &a, const std::string &what, const std::string &warning,
+                      std::function<void()> yes) {
+	a.confirm = true;
+	a.confirmText = "Delete " + what + "?\n" + warning;
+	a.confirmYes = std::move(yes);
+	a.dirty = 1;
 }
 
 // --- rows ------------------------------------------------------------------
 
-static void buildInstallRows(App &a) {
-	Row head;
-	head.plain = true;
-	head.label = "Needs setup";
-	a.rows.push_back(head);
+// The online-updates switch, on both root pages: a card that is not set up yet
+// has no main page to reach it from, and an Uninstall can drop a card back onto
+// this page while the network is off.
+static void pushOnlineRow(App &a) {
+	Row online;
+	online.label = a.env.online ? "Disable online updates" : "Enable online updates";
+	online.actionHint = a.env.online ? "DISABLE" : "ENABLE";
+	online.action = [&a]() { doToggleOnline(a); };
+	a.rows.push_back(online);
+}
 
+// The other way to install without a network: the boot-installed full pack.  The
+// pakz is applied by NextUI itself, so it works with online updates off.
+static void pushFullPackHint(App &a) {
+	Row r;
+	r.plain = true;
+	r.label = "No network? Apply MinarchGL.Full_" + a.paths.platform + ".pakz.";
+	a.rows.push_back(r);
+}
+
+static void buildInstallRows(App &a) {
+	// The reason line is the state; no separate "Needs setup" caption any more,
+	// it only repeated what the Setup row already says.
 	Row why;
 	why.plain = true;
-	why.label = a.frontend.reason.empty() ? "MinarchGL is not installed." : a.frontend.reason;
+	why.label = a.frontend.reason.empty() ? "MinarchGL is not set up." : a.frontend.reason;
 	a.rows.push_back(why);
 
-	if (a.frontend.state == mgl::FrontendState::StockLost) return;   // nothing we can do
-
-	if (!a.manifest.ok) {
-		Row note;
-		note.plain = true;
-		note.label = a.manifest.err;
-		a.rows.push_back(note);
+	if (a.frontend.state == mgl::FrontendState::StockLost) {
+		// Nothing can be done from here; the switch still has to be reachable.
+		pushOnlineRow(a);
 		return;
 	}
-	if (a.manifest.latestGl.empty()) {
-		Row note;
-		note.plain = true;
-		note.label = "The release does not publish the frontend.";
-		a.rows.push_back(note);
+
+	// Only "no network and nothing local" hides the action.  With online on the
+	// row stays even when the startup knows nothing about the release: pressing
+	// it fetches the manifest first (refreshManifest), so the button is never
+	// hidden by a stale or missing copy of that file.
+	if (!a.env.online &&
+	    !mgl::assetReachable(a.env, a.paths, a.paths.frontendAsset(), a.manifest.latestGl)) {
+		Row off;
+		off.plain = true;
+		off.label = "Online updates are off; enable them to set up.";
+		a.rows.push_back(off);
+		pushFullPackHint(a);
+		pushOnlineRow(a);
 		return;
 	}
 
 	const bool repair = mgl::installedBefore(a.frontend);
 	Row act;
-	act.label = repair ? "Repair MinarchGL" : "Install MinarchGL";
-	act.actionHint = repair ? "REPAIR" : "INSTALL";
-	act.action = [&a, repair]() { doFrontendInstall(a, repair ? "Repaired." : "Installed."); };
+	// "Setup" is what this actually does: save the stock frontend, install our
+	// copy and stop there (Enable is the separate switch on the main page).
+	act.label = repair ? "Repair MinarchGL" : "Setup User Data";
+	act.actionHint = repair ? "REPAIR" : "SETUP";
+	act.action = [&a, repair]() { doFrontendInstall(a, repair ? "Repaired." : "MinarchGL is set up."); };
 	a.rows.push_back(act);
+	pushOnlineRow(a);
 }
 
 static void buildMainRows(App &a) {
@@ -615,10 +773,16 @@ static void buildMainRows(App &a) {
 	toggle.action = [&a, enabled]() { enabled ? doDisable(a) : doEnable(a); };
 	a.rows.push_back(toggle);
 
-	// Update is offered only when the release actually publishes a frontend and
-	// it differs from the installed copy.  Same action as Repair.
-	if (a.manifest.ok && !a.manifest.latestGl.empty() && !a.frontend.gl.empty() &&
-	    a.frontend.gl != a.manifest.latestGl) {
+	// With online updates on, Update is always offered once the frontend is
+	// installed: the press refreshes the manifest and answers "Already up to
+	// date." when there is nothing newer.  Offline it appears only when the
+	// local copy actually has a different frontend.
+	const bool installed = a.frontend.state == mgl::FrontendState::Disabled ||
+		a.frontend.state == mgl::FrontendState::Enabled;
+	const bool knownNewer = a.manifest.ok && !a.manifest.latestGl.empty() &&
+		!a.frontend.gl.empty() && a.frontend.gl != a.manifest.latestGl;
+	if (installed && (a.env.online ||
+	    (knownNewer && mgl::assetReachable(a.env, a.paths, a.paths.frontendAsset(), a.manifest.latestGl)))) {
 		Row up;
 		up.label = "Update MinarchGL";
 		up.actionHint = "UPDATE";
@@ -626,28 +790,57 @@ static void buildMainRows(App &a) {
 		a.rows.push_back(up);
 	}
 
+	Row cores;
+	cores.label = "Cores";
+	cores.openHint = "OPEN";
+	cores.open = [&a]() { go(a, Screen::Cores); };
+	a.rows.push_back(cores);
+
 	Row status;
 	status.label = "Status";
 	status.openHint = "OPEN";
 	status.open = [&a]() { go(a, Screen::Status); };
 	a.rows.push_back(status);
 
+	pushOnlineRow(a);
+
+	// What this removes is MinarchGL's own files (frontend copies, stock backup,
+	// cache and downloads), not MinarchGL's core paks, ROMs, saves or BIOS.
 	Row un;
-	un.label = "Uninstall MinarchGL";
-	un.actionHint = "UNINSTALL";
+	un.label = "Clean User Data";
+	un.actionHint = "CLEAN";
 	un.action = [&a]() { doUninstallFrontend(a); };
 	a.rows.push_back(un);
 }
 
+// Read-only detail: what the card has, where it keeps it, and per core the pin
+// in effect next to the pin the release publishes.  The rows are selectable so
+// the cursor can walk them, but nothing here has an action.
 static void buildStatusRows(App &a) {
 	Row state;
 	state.plain = true;
+	state.focusable = true;
 	state.label = "State";
 	state.value = titleOf(a.frontend);
 	a.rows.push_back(state);
 
+	Row online;
+	online.plain = true;
+	online.focusable = true;
+	online.label = "Online updates";
+	online.value = a.env.online ? "on" : "off";
+	a.rows.push_back(online);
+
+	Row where;
+	where.plain = true;
+	where.focusable = true;
+	where.label = "Installed At";
+	where.value = a.paths.stateDir();
+	a.rows.push_back(where);
+
 	Row gl;
 	gl.plain = true;
+	gl.focusable = true;
 	gl.label = "MinarchGL";
 	if (a.frontend.gl.empty()) gl.value = "missing";
 	else {
@@ -660,32 +853,61 @@ static void buildStatusRows(App &a) {
 
 	Row stock;
 	stock.plain = true;
+	stock.focusable = true;
 	stock.label = "Stock";
 	stock.value = a.frontend.stock.empty() ? "missing" : mgl::shortHash(a.frontend.stock);
 	a.rows.push_back(stock);
 
-	Row list;
-	list.plain = true;
-	list.label = "Core list";
-	if (!a.manifest.ok) list.value = "unavailable";
-	else if (!a.manifest.list.hasPlatform) list.value = "no release for " + a.paths.platform;
-	else {
-		list.value = std::to_string(a.manifest.list.cores.size()) + " cores   " +
-			mgl::manifestSourceName(a.manifest.source);
-	}
-	a.rows.push_back(list);
-
-	if (a.manifest.ok) {
-		for (int i = 0; i < (int)a.manifest.list.cores.size(); i++) {
-			const mgl::CoreEntry &e = a.manifest.list.cores[i];
+	if (a.manifest.ok && a.manifest.list.hasPlatform) {
+		for (const mgl::CoreEntry &e : a.manifest.list.cores) {
 			const mgl::CoreStatus s = mgl::coreStatus(a.paths, e);
 			Row r;
+			r.plain = true;
+			r.focusable = true;
 			r.label = e.name;
-			r.value = mgl::coreStateName(s.state);
-			r.openHint = "OPEN";
-			r.open = [&a, i]() { a.coreIndex = i; a.statusRow = (int)a.rows.size() - a.manifest.list.cores.size() + i; go(a, Screen::Core); };
+			std::string have = s.pin;
+			if (s.state == mgl::CoreState::NotInstalled) have = "none";
+			else if (have.empty()) have = "unknown";
+			r.value = "installed " + have + "  latest " + (e.pin.empty() ? std::string("unknown") : e.pin);
 			a.rows.push_back(r);
 		}
+	}
+}
+
+// One row per core in the release list, with the state of the copy on the card.
+// The list lives here and not on the status page: status answers "what does the
+// card have", this page is where cores are managed.
+static void buildCoresRows(App &a) {
+	if (!a.manifest.ok) {
+		Row note;
+		note.plain = true;
+		note.label = "Core list unavailable.";
+		a.rows.push_back(note);
+		return;
+	}
+	if (!a.manifest.list.hasPlatform) {
+		Row note;
+		note.plain = true;
+		note.label = "No release for " + a.paths.platform + ".";
+		a.rows.push_back(note);
+		return;
+	}
+	if (a.manifest.list.cores.empty()) {
+		Row note;
+		note.plain = true;
+		note.label = "The release lists no cores.";
+		a.rows.push_back(note);
+		return;
+	}
+	for (int i = 0; i < (int)a.manifest.list.cores.size(); i++) {
+		const mgl::CoreEntry &e = a.manifest.list.cores[i];
+		const mgl::CoreStatus s = mgl::coreStatus(a.paths, e);
+		Row r;
+		r.label = e.name;
+		r.value = mgl::coreStateName(s.state);
+		r.openHint = "OPEN";
+		r.open = [&a, i]() { a.coreIndex = i; go(a, Screen::Core); };
+		a.rows.push_back(r);
 	}
 }
 
@@ -700,21 +922,26 @@ static void buildCoreRows(App &a) {
 	}
 	const mgl::CoreStatus s = mgl::coreStatus(a.paths, e);
 
-	if (s.state == mgl::CoreState::NotInstalled) {
+	// Online: Install/Update stay available and the press refreshes the manifest
+	// first.  Offline: only what the card can actually do (a cached tarball)
+	// shows a row.
+	const bool installed = s.state != mgl::CoreState::NotInstalled;
+	const bool localCopy = mgl::assetReachable(a.env, a.paths, e.file, e.sha256);
+	if (s.state == mgl::CoreState::NotInstalled && (a.env.online || localCopy)) {
 		Row r;
 		r.label = "Install";
 		r.actionHint = "INSTALL";
 		r.action = [&a]() { doCoreInstall(a, "Installed."); };
 		a.rows.push_back(r);
 	}
-	if (s.state == mgl::CoreState::NotLatest) {
+	if (installed && (a.env.online || (s.state == mgl::CoreState::NotLatest && localCopy))) {
 		Row r;
 		r.label = "Update";
 		r.actionHint = "UPDATE";
 		r.action = [&a]() { doCoreInstall(a, "Updated."); };
 		a.rows.push_back(r);
 	}
-	if (s.state != mgl::CoreState::NotInstalled) {
+	if (installed) {
 		Row r;
 		r.label = "Uninstall";
 		r.actionHint = "UNINSTALL";
@@ -722,19 +949,48 @@ static void buildCoreRows(App &a) {
 		a.rows.push_back(r);
 	}
 
+	// Folders the card has: each is listed and each can be deleted on its own,
+	// after a confirmation that says what is inside it.  Memory cards hold the
+	// only copy of a save, so nothing here deletes without that step.
 	const std::vector<std::string> dirs = mgl::romFoldersForTag(a.paths, e.tag);
 	for (const std::string &d : dirs) {
+		const std::string what = "Roms/" + d;
 		Row r;
-		r.plain = true;
-		r.label = "Roms/" + d;
+		r.label = what;
+		r.actionHint = "DELETE";
+		r.action = [&a, d, what]() {
+			askDelete(a, what, "All files inside it will be lost.",
+			          [&a, d]() { doDeleteRom(a, d); });
+		};
 		a.rows.push_back(r);
 	}
 
+	if (mgl::dirExists(a.paths.biosDir(e.tag))) {
+		const std::string what = "Bios/" + e.tag;
+		Row r;
+		r.label = what;
+		r.actionHint = "DELETE";
+		r.action = [&a, what]() {
+			askDelete(a, what, "All BIOS files inside it will be lost.",
+			          [&a]() { doDeleteBios(a); });
+		};
+		a.rows.push_back(r);
+	}
+
+	// Creation is per kind: a missing BIOS directory and a missing set of ROM
+	// folders are different requests, and each gets its own row.
 	if (dirs.empty()) {
 		Row r;
-		r.label = "Create default folder";
+		r.label = "Create default Roms folder";
 		r.actionHint = "CREATE";
-		r.action = [&a]() { doCreateFolders(a); };
+		r.action = [&a]() { doCreateRoms(a); };
+		a.rows.push_back(r);
+	}
+	if (!mgl::dirExists(a.paths.biosDir(e.tag))) {
+		Row r;
+		r.label = "Create Bios folder";
+		r.actionHint = "CREATE";
+		r.action = [&a]() { doCreateBios(a); };
 		a.rows.push_back(r);
 	}
 }
@@ -744,6 +1000,7 @@ static void rebuildRows(App &a) {
 	switch (a.screen) {
 	case Screen::Install: buildInstallRows(a); break;
 	case Screen::Main: buildMainRows(a); break;
+	case Screen::Cores: buildCoresRows(a); break;
 	case Screen::Status: buildStatusRows(a); break;
 	case Screen::Core: buildCoreRows(a); break;
 	case Screen::Done: break;
@@ -759,6 +1016,12 @@ static void render(App &a) {
 
 	if (a.busy) {
 		drawBusy(a);
+		GFX_flip(a.surf);
+		return;
+	}
+
+	if (a.confirm) {
+		drawConfirm(a);
 		GFX_flip(a.surf);
 		return;
 	}
@@ -802,6 +1065,26 @@ static mgl::Progress progressOf(App &a) {
 static void handleInput(App &a) {
 	if (a.busy) return;   // input is dropped while an action runs
 
+	// A confirmation is modal: Y accepts, B cancels, everything else waits --
+	// including A, so the button that dismisses ordinary messages cannot accept
+	// a deletion by accident.
+	if (a.confirm) {
+		if (PAD_justPressed(BTN_B)) {
+			a.confirm = false;
+			a.confirmYes = nullptr;
+			a.dirty = 1;
+		} else if (PAD_justPressed(BTN_Y) && a.confirmYes) {
+			// Move the callback out first: it repaints the screen and replaces
+			// the confirmation with the result.
+			std::function<void()> yes = std::move(a.confirmYes);
+			a.confirm = false;
+			a.confirmYes = nullptr;
+			a.dirty = 1;
+			yes();
+		}
+		return;
+	}
+
 	if (a.message) {
 		if (PAD_justPressed(BTN_A)) {
 			a.message = false;
@@ -812,7 +1095,7 @@ static void handleInput(App &a) {
 
 	if (a.screen == Screen::Done) {
 		if (PAD_justPressed(BTN_B)) {
-			if (a.doneFromCore) go(a, Screen::Core);
+			if (a.doneFromCore) go(a, Screen::Cores);
 			else go(a, Screen::Install);
 		}
 		return;
@@ -823,12 +1106,14 @@ static void handleInput(App &a) {
 
 	if (PAD_justPressed(BTN_B)) {
 		switch (a.screen) {
+		case Screen::Cores: go(a, Screen::Main); break;
 		case Screen::Status: go(a, Screen::Main); break;
 		case Screen::Core: {
-			// Back to the status list with the same core still selected.
-			const int row = a.statusRow;
-			go(a, Screen::Status);
-			if (row >= 0 && row < (int)a.rows.size()) a.sel = row;
+			// Back to the core list with the same core still selected: its rows
+			// are exactly the manifest's cores, in order.
+			const int idx = a.coreIndex;
+			go(a, Screen::Cores);
+			if (idx >= 0 && idx < (int)a.rows.size() && selectable(a.rows[idx])) a.sel = idx;
 			break;
 		}
 		default: a.quit = 1; break;   // a root screen: leave the tool
@@ -856,7 +1141,7 @@ int main(int argc, char *argv[]) {
 
 	App app;
 	app.paths = makePaths();
-	app.env = mgl::defaultEnv();
+	app.env = mgl::defaultEnv(mgl::onlineUpdatesEnabled(app.paths));
 
 	// No UI: run one action and leave.  Everything below the UI entry point is
 	// the same code, so a CLI failure is a UI failure.
@@ -884,14 +1169,11 @@ int main(int argc, char *argv[]) {
 		fflush(stdout);
 	}
 
-	// Startup check: fetch the manifest (bounded, ~5 s worst case) while the
-	// "Checking for updates..." line is on screen.  A failure is not fatal: the
-	// local actions still work and the page says what is missing.
-	app.busy = true;
-	app.busyText = "Checking for updates...";
-	render(app);
-	app.manifest = mgl::loadManifest(app.paths, app.env, true, progressOf(app));
-	app.busy = false;
+	// No network at startup: only what is already on the card (bundled/, then
+	// the last download) is used to draw the first screen.  Every button that
+	// needs the release fetches a fresh manifest when it is pressed
+	// (refreshManifest), so a failed or missing copy never hides an action.
+	app.manifest = mgl::loadManifest(app.paths, app.env, false);
 	app.frontend = mgl::frontendInfo(app.paths, app.manifest.latestGl);
 
 	app.screen = (app.frontend.state == mgl::FrontendState::Disabled ||
@@ -900,6 +1182,7 @@ int main(int argc, char *argv[]) {
 	if (argc > 2 && strcmp(argv[1], "--page") == 0) {
 		const std::string page = argv[2];
 		if (page == "main") app.screen = Screen::Main;
+		else if (page == "cores") app.screen = Screen::Cores;
 		else if (page == "status") app.screen = Screen::Status;
 		else if (page == "core") { app.screen = Screen::Core; app.coreIndex = 0; }
 		else if (page == "done") { app.screen = Screen::Done; app.doneFromCore = false; app.messageText = "MinarchGL removed."; }

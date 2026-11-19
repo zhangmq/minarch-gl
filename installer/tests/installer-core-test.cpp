@@ -147,11 +147,15 @@ static void writeManifest(Release &rel, const std::string &platform, const std::
 	writeStr(rel.dir + "/SHA256SUMS", sums);
 }
 
-// An Env that serves the release directory and really extracts with tar.
-static Env fakeEnv(const std::string &assetDir) {
+// An Env that serves the release directory and really extracts with tar.  It
+// enforces `online` the same way defaultEnv() does, so an offline manifest test
+// cannot silently reach the fake network.
+static Env fakeEnv(const std::string &assetDir, bool online = true) {
 	Env e;
 	e.baseUrl = "https://example.invalid/release";
-	e.fetch = [assetDir](const std::string &url, const std::string &dest, int, std::string &err) {
+	e.online = online;
+	e.fetch = [assetDir, online](const std::string &url, const std::string &dest, int, std::string &err) {
+		if (!online && isRemoteUrl(url)) { err = "online updates are off"; return false; }
 		const std::string name = url.substr(url.rfind('/') + 1);
 		if (!fileExists(assetDir + "/" + name)) { err = "404 " + name; return false; }
 		if (!copyFile(assetDir + "/" + name, dest)) { err = "cannot copy " + name; return false; }
@@ -314,19 +318,29 @@ static void testManifestSources(const std::string &root) {
 	Manifest stale = loadManifest(p, env, false);
 	CHECK(!stale.ok);
 
-	// bundled/ wins over the network, and is never overwritten.
+	// With the network on, the fresh copy wins over bundled/ (it is the only one
+	// that can be newer); bundled/ is not overwritten by that check.
 	mkdirs(p.bundledDir());
 	writeStr(p.bundledDir() + "/core-list.json", "{\"schema\": 1, \"platforms\": {\"h700\": {\"cores\": []}}}");
 	writeStr(p.bundledDir() + "/SHA256SUMS", sha256Hex(p.bundledDir() + "/core-list.json") + "  core-list.json\n");
-	Manifest bundled = loadManifest(p, env, true);
+	Manifest fresh = loadManifest(p, env, true);
+	CHECK(fresh.ok);
+	CHECK(fresh.source == ManifestSource::Online);
+	CHECK(fresh.list.cores.size() == 1);
+
+	// With online updates off the network is refused instantly and bundled/ is
+	// what the tool works from.
+	Manifest bundled = loadManifest(p, fakeEnv(rel.dir, false), true);
 	CHECK(bundled.ok);
 	CHECK(bundled.source == ManifestSource::Bundled);
 	CHECK(bundled.list.cores.empty());
 
-	// bundled/ without a checksum table is not a usable release.
+	// bundled/ without a checksum table is not a usable release; the last good
+	// download cached under .userdata is used instead.
 	unlink((p.bundledDir() + "/SHA256SUMS").c_str());
 	Manifest noSums = loadManifest(p, env, false);
-	CHECK(!noSums.ok);
+	CHECK(noSums.ok);
+	CHECK(noSums.source == ManifestSource::Cached);
 
 	// A downloaded manifest whose bytes do not match the sums is rejected and
 	// must not replace the cache.
@@ -340,6 +354,16 @@ static void testManifestSources(const std::string &root) {
 	Env brokenEnv = fakeEnv(broken.dir);
 	Manifest bad = loadManifest(q, brokenEnv, true);
 	CHECK(!bad.ok);
+
+	// A release that publishes nothing (GitHub 404): say that, instead of
+	// claiming there is no network.
+	Paths nf;
+	nf.sdcard = root + "/card-404";
+	nf.platform = "h700";
+	Release empty(root + "/release-empty");
+	Manifest notFound = loadManifest(nf, fakeEnv(empty.dir), true);
+	CHECK(!notFound.ok);
+	CHECK_EQ_STR(notFound.err, "No release has been published yet.");
 
 	// Unknown platform section: a valid release, no cores for this card.
 	Paths z;
@@ -425,7 +449,7 @@ static void testFrontendStates(const std::string &root) {
 	writeStr(p.minarchPath(), STOCK_ELF);
 	f = frontendInfo(p, "");
 	CHECK(f.state == FrontendState::NotInstalled);
-	CHECK_EQ_STR(f.reason, "MinarchGL is not installed.");
+	CHECK_EQ_STR(f.reason, "MinarchGL is not set up.");
 
 	// Install: the running stock binary is saved, our copy is added, and the
 	// running binary stays stock (Install does not enable).
@@ -633,6 +657,36 @@ static void testCores(const std::string &root) {
 	CHECK(romFoldersForTag(p, e.tag).size() == 2);
 	CHECK(romFoldersForTag(p, "LIBRETRO_YABASANSHIRO").empty());
 
+	// BIOS and ROM folders are created separately now (each has its own row on
+	// the core page), so a deleted BIOS directory can be restored on its own.
+	CHECK(deleteBiosFolder(p, e.tag).ok);
+	CHECK(!dirExists(p.biosDir(e.tag)));
+	CHECK(createBiosFolder(p, e.tag).ok);
+	CHECK(dirExists(p.biosDir(e.tag)));
+	CHECK(createBiosFolder(p, e.tag).ok);        // idempotent
+	CHECK(createRomFolders(p, e).ok);            // idempotent too
+
+	// Deleting a ROM folder takes its contents with it, and only for this tag.
+	const std::string dc = p.romsDir() + "/Sega Dreamcast (LIBRETRO_FLYCAST)";
+	writeStr(dc + "/game.gdi", "disc\n");
+	mkdirs(dc + "/sub");
+	writeStr(dc + "/sub/track01.bin", "data\n");
+	CHECK(!deleteRomFolder(p, "LIBRETRO_YABASANSHIRO", "Sega Dreamcast (LIBRETRO_FLYCAST)").ok);
+	CHECK(!deleteRomFolder(p, e.tag, "../h700").ok);
+	CHECK(!deleteRomFolder(p, e.tag, "Sega Dreamcast").ok);   // no tag in the name
+	CHECK(deleteRomFolder(p, e.tag, "Sega Dreamcast (LIBRETRO_FLYCAST)").ok);
+	CHECK(!dirExists(dc));
+	CHECK(!fileExists(dc + "/sub/track01.bin"));
+	CHECK(romFoldersForTag(p, e.tag).size() == 1);
+	CHECK(!deleteRomFolder(p, e.tag, "Sega Dreamcast (LIBRETRO_FLYCAST)").ok);  // already gone
+
+	// A BIOS directory with files in it goes the same way.
+	writeStr(p.biosDir(e.tag) + "/dc_boot.bin", "bios\n");
+	CHECK(!deleteBiosFolder(p, "LIBRETRO__evil").ok);
+	CHECK(deleteBiosFolder(p, e.tag).ok);
+	CHECK(!dirExists(p.biosDir(e.tag)));
+	CHECK(!fileExists(p.biosDir(e.tag) + "/dc_boot.bin"));
+
 	// An archive that does not hold a pak is refused.
 	Release junk(root + "/release-junk");
 	mkdirs(junk.dir + "/.src");
@@ -650,6 +704,88 @@ static void testCores(const std::string &root) {
 	CHECK(!dirExists(p.coreTmpDir(je.tag)));
 }
 
+/////////////////////////////////////////////////////////////////////////////////
+// preferences and the offline policy
+
+static void testPrefs(const std::string &root) {
+	Paths p;
+	p.sdcard = root + "/card-prefs";
+	p.platform = "h700";
+
+	// Never chosen: online, exactly like a card that predates the setting.
+	CHECK(!fileExists(p.prefsPath()));
+	CHECK(onlineUpdatesEnabled(p));
+
+	// A choice is written atomically and read back.
+	CHECK(setOnlineUpdates(p, false));
+	CHECK(fileExists(p.prefsPath()));
+	CHECK(!onlineUpdatesEnabled(p));
+	CHECK(setOnlineUpdates(p, true));
+	CHECK(onlineUpdatesEnabled(p));
+
+	// Unknown keys survive a rewrite: a newer build's prefs are not destroyed.
+	writeStr(p.prefsPath(), "theme=dark\nonline=0\nsomething=1\n");
+	CHECK(!onlineUpdatesEnabled(p));
+	CHECK(setOnlineUpdates(p, true));
+	const std::string after = readAll(p.prefsPath());
+	CHECK(after.find("theme=dark") != std::string::npos);
+	CHECK(after.find("something=1") != std::string::npos);
+	CHECK(onlineUpdatesEnabled(p));
+
+	// Malformed or missing values fall back to on, not to a broken state.
+	writeStr(p.prefsPath(), "online=banana\n");
+	CHECK(onlineUpdatesEnabled(p));
+	writeStr(p.prefsPath(), "");
+	CHECK(onlineUpdatesEnabled(p));
+
+	// A frontend uninstall drops the state directory but keeps the preference
+	// (and nothing else): the setup page has to remember the choice.
+	CHECK(setOnlineUpdates(p, false));
+	mkdirs(p.stateDir());
+	writeStr(p.stateDir() + "/junk", "x");
+	CHECK(uninstallFrontend(p).ok);
+	CHECK(!fileExists(p.stateDir() + "/junk"));
+	CHECK(!onlineUpdatesEnabled(p));
+}
+
+static void testOfflinePolicy(const std::string &root) {
+	// The scheme helpers decide what counts as leaving the card.
+	CHECK(isRemoteUrl("https://github.com/x"));
+	CHECK(isRemoteUrl("http://example.invalid/x"));
+	CHECK(!isRemoteUrl("file:///mnt/SDCARD/x"));
+	CHECK(isLocalUrl("file:///mnt/SDCARD/x"));
+	CHECK(!isLocalUrl("https://github.com/x"));
+
+	// defaultEnv(false) refuses remote URLs before curl runs (so this test makes
+	// no network request at all), and the error says why.
+	Env off = defaultEnv(false);
+	std::string err;
+	const std::string dest = root + "/prefs-dest";
+	CHECK(!off.fetch("https://example.invalid/core-list.json", dest, 1, err));
+	CHECK_EQ_STR(err, "online updates are off");
+	CHECK(!fileExists(dest));
+	// ... while the same call is allowed when online is on (fake by checking the
+	// scheme gate only: the URL is never dialled in this test).
+
+	// assetReachable: online accepts anything; offline only what is on the card
+	// or behind a file:// base URL.
+	Paths p;
+	p.sdcard = root + "/card-assets-reach";
+	p.platform = "h700";
+	Env online = defaultEnv(true);
+	CHECK(assetReachable(online, p, "minarch-gl_h700.elf", std::string(64, 'a')));
+	Env offline = defaultEnv(false);
+	CHECK(!assetReachable(offline, p, "minarch-gl_h700.elf", std::string(64, 'a')));
+	Env local = defaultEnv(false);
+	local.baseUrl = "file:///mnt/SDCARD/MinarchGL.Pack";
+	CHECK(assetReachable(local, p, "minarch-gl_h700.elf", std::string(64, 'a')));
+	mkdirs(p.dlDir());
+	writeStr(p.dlDir() + "/minarch-gl_h700.elf", GL_ELF);
+	const std::string sha = sha256Hex(p.dlDir() + "/minarch-gl_h700.elf");
+	CHECK(assetReachable(offline, p, "minarch-gl_h700.elf", sha));
+	CHECK(!assetReachable(offline, p, "minarch-gl_h700.elf", std::string(64, 'a')));
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 
 int main() {
@@ -659,6 +795,8 @@ int main() {
 	testManifestParsing();
 	testSums();
 	testManifestSources(root);
+	testPrefs(root);
+	testOfflinePolicy(root);
 	testAssets(root);
 	testFrontendStates(root);
 	testCores(root);

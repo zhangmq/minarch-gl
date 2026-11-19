@@ -94,6 +94,8 @@ struct Paths {
 	std::string dlDir() const { return stateDir() + "/dl"; }
 	std::string bundledDir() const { return stateDir() + "/bundled"; }
 	std::string logsDir() const { return userDataDir() + "/logs"; }
+	// One key per line; see onlineUpdatesEnabled()/setOnlineUpdates().
+	std::string prefsPath() const { return stateDir() + "/prefs"; }
 	std::string emusDir() const { return sdcard + "/Emus/" + platform; }
 	std::string corePakDir(const std::string &tag) const { return emusDir() + "/" + tag + ".pak"; }
 	std::string coreTmpDir(const std::string &tag) const { return emusDir() + "/.tmp-" + tag; }
@@ -248,6 +250,54 @@ inline void forEachDir(const std::string &dir, const std::function<void(const st
 }
 
 inline void syncNow() { sync(); }
+
+// The tool's own preferences: a small text file under .userdata, one key per
+// line.  Only "online" today, and a missing file means on -- a card that never
+// saw a choice keeps updating.  All file logic lives here so the tests cover it
+// and the UI only decides when to ask.
+inline bool onlineUpdatesEnabled(const Paths &p) {
+	const std::string s = readFile(p.prefsPath(), 4 * 1024);
+	size_t pos = 0;
+	while (pos < s.size()) {
+		const size_t nl = s.find('\n', pos);
+		const std::string line = trim(s.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos));
+		if (line.rfind("online=", 0) == 0) {
+			const std::string v = trim(line.substr(7));
+			if (v == "0" || v == "off" || v == "false") return false;
+			if (v == "1" || v == "on" || v == "true") return true;
+		}
+		if (nl == std::string::npos) break;
+		pos = nl + 1;
+	}
+	return true;
+}
+
+// Rewrite only the online= line: a prefs file from a newer build keeps whatever
+// else it carries.
+inline bool setOnlineUpdates(const Paths &p, bool on) {
+	const std::string old = readFile(p.prefsPath(), 4 * 1024);
+	std::string kept;
+	size_t pos = 0;
+	while (pos < old.size()) {
+		const size_t nl = old.find('\n', pos);
+		const std::string line = old.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
+		if (line.rfind("online=", 0) != 0 && !trim(line).empty()) kept += line + "\n";
+		if (nl == std::string::npos) break;
+		pos = nl + 1;
+	}
+	mkdirs(p.stateDir());
+	const std::string data = kept + "online=" + (on ? "1" : "0") + "\n";
+	if (!writeFileAtomic(p.prefsPath(), data, 0644)) return false;
+	syncNow();
+	return true;
+}
+
+// Whether a URL leaves the card.  Offline mode refuses these, but keeps file://
+// working: the Full Pack installs through file:// and so does the dev override.
+inline bool isRemoteUrl(const std::string &url) {
+	return url.compare(0, 7, "http://") == 0 || url.compare(0, 8, "https://") == 0;
+}
+inline bool isLocalUrl(const std::string &url) { return url.compare(0, 7, "file://") == 0; }
 
 // Bytes available to an unprivileged writer; -1 when the filesystem cannot say.
 inline long long freeBytes(const std::string &path) {
@@ -453,6 +503,9 @@ inline bool unpackArchive(const std::string &archive, const std::string &destDir
 // the tests can replace both with plain local copies and stay offline.
 struct Env {
 	std::string baseUrl;
+	// false = online updates are off: the fetch below refuses http(s) and still
+	// accepts file://, so the Full Pack and the dev override keep working.
+	bool online = true;
 	std::function<bool(const std::string &url, const std::string &dest, int timeoutSec, std::string &err)> fetch;
 	std::function<bool(const std::string &archive, const std::string &destDir,
 	                   const std::string &workDir, std::string &err)> unpack;
@@ -460,10 +513,15 @@ struct Env {
 	std::string urlFor(const std::string &asset) const { return baseUrl + "/" + asset; }
 };
 
-inline Env defaultEnv() {
+inline Env defaultEnv(bool online = true) {
 	Env e;
 	e.baseUrl = baseUrl();
-	e.fetch = [](const std::string &url, const std::string &dest, int timeoutSec, std::string &err) {
+	e.online = online;
+	e.fetch = [online](const std::string &url, const std::string &dest, int timeoutSec, std::string &err) {
+		if (!online && isRemoteUrl(url)) {
+			err = "online updates are off";
+			return false;
+		}
 		return curlFetch(url, dest, timeoutSec, err);
 	};
 	e.unpack = [](const std::string &archive, const std::string &destDir,
@@ -846,28 +904,31 @@ inline bool loadLocalManifest(const std::string &dir, const std::string &platfor
 
 // The manifest the installer should work from.
 //
-// Order: a local copy the user put there on purpose (bundled/, from the offline
-// set or by hand), then the network, then the last download cached under
-// .userdata.  The cache exists so that a card without a network still shows
-// what it has installed and what it is missing.
+// Order: the network first (it is the only source that can be newer), then a
+// local copy (bundled/, from the Full Pack or put there by hand), then the last
+// download cached under .userdata.  With online updates off the fetch refuses
+// http(s) immediately, so the local copies win without any network wait; a
+// file:// base URL (the Full Pack's post_install, the dev override) still works.
 inline Manifest loadManifest(const Paths &p, const Env &env, bool allowNetwork,
                              const Progress &progress = nullptr) {
 	Manifest m;
 	std::string err;
-
-	if (loadLocalManifest(p.bundledDir(), p.platform, ManifestSource::Bundled, m, err)) return m;
-	m = Manifest();
+	bool notFound = false;
 
 	if (allowNetwork && env.fetch) {
 		mkdirs(p.dlDir());
 		const std::string tmpList = p.dlDir() + "/.core-list.json.part";
 		const std::string tmpSums = p.dlDir() + "/.SHA256SUMS.part";
-		report(progress, "Checking", "for updates");
+		report(progress, env.online ? "Checking" : "Reading", env.online ? "for updates" : "local data");
 		std::string e1, e2;
 		// Two requests with a shared budget of ~5 s: the manifest gets the larger
 		// half because it is the one the screen waits for.
 		const bool gotList = env.fetch(env.urlFor(kCoreListName), tmpList, 3, e1);
 		const bool gotSums = env.fetch(env.urlFor(kSumsName), tmpSums, 2, e2);
+		// GitHub answers 404 when the repository has no release yet (or the
+		// latest one carries no manifest).  That is not a network failure and
+		// should not be reported as one.
+		notFound = e1.find("404") != std::string::npos || e2.find("404") != std::string::npos;
 		if (gotList && gotSums) {
 			Manifest fresh;
 			const std::vector<std::pair<std::string, std::string>> sums = parseSums(readFile(tmpSums, 256 * 1024));
@@ -890,13 +951,19 @@ inline Manifest loadManifest(const Paths &p, const Env &env, bool allowNetwork,
 		unlink(tmpList.c_str());
 		unlink(tmpSums.c_str());
 	}
+	m = Manifest();
+
+	if (loadLocalManifest(p.bundledDir(), p.platform, ManifestSource::Bundled, m, err)) return m;
+	m = Manifest();
 
 	Manifest cached;
 	if (loadLocalManifest(p.stateDir(), p.platform, ManifestSource::Cached, cached, err)) return cached;
 
 	m = Manifest();
 	m.ok = false;
-	m.err = "No network and no local copy.";
+	m.err = notFound ? "No release has been published yet."
+	                 : (env.online ? "No network and no local copy."
+	                               : "Online updates are off and no local copy.");
 	return m;
 }
 
@@ -965,6 +1032,21 @@ inline bool acquireAsset(const Paths &p, const Env &env, const std::string &name
 	out.path = cached;
 	out.downloaded = true;
 	return true;
+}
+
+// Whether an action that needs this asset can succeed right now.  Online, any
+// published asset qualifies (the download will fetch it).  Offline, only one
+// that is already on the card -- or a file:// base URL, which is local.  The UI
+// hides rows this says no to, so Y never lands on a button that cannot work.
+inline bool assetReachable(const Env &env, const Paths &p, const std::string &name,
+                           const std::string &sha256) {
+	if (env.online) return true;
+	if (isLocalUrl(env.baseUrl)) return true;
+	const std::string bundled = p.bundledDir() + "/" + name;
+	if (fileExists(bundled) && sha256Hex(bundled) == sha256) return true;
+	const std::string cached = p.dlDir() + "/" + name;
+	if (fileExists(cached) && sha256Hex(cached) == sha256) return true;
+	return false;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1038,7 +1120,7 @@ inline FrontendInfo frontendInfo(const Paths &p, const std::string &latestGl) {
 	}
 	if (!hasGl) {
 		f.state = FrontendState::NotInstalled;
-		f.reason = "MinarchGL is not installed.";
+		f.reason = "MinarchGL is not set up.";
 		return f;
 	}
 	if (!hasStock) {
@@ -1185,7 +1267,15 @@ inline Result uninstallFrontend(const Paths &p) {
 			return r;
 		}
 	}
+	// The online-updates preference is the user's, not part of what a frontend
+	// uninstall removes: keep that one file while the backups, cache and
+	// downloads go.
+	const std::string prefs = readFile(p.prefsPath(), 4 * 1024);
 	removeTree(p.stateDir());
+	if (!prefs.empty()) {
+		mkdirs(p.stateDir());
+		writeFileAtomic(p.prefsPath(), prefs, 0644);
+	}
 	syncNow();
 	r.ok = true;
 	return r;
@@ -1329,17 +1419,24 @@ inline std::vector<std::string> romFoldersForTag(const Paths &p, const std::stri
 	return out;
 }
 
-// Create the default folders of one core: its BIOS directory plus one ROM folder
-// per system, e.g. "Bios/LIBRETRO_FLYCAST/" and
-// "Roms/Sega Dreamcast (LIBRETRO_FLYCAST)".
-//
-// Only the tag directory is created: how a core lays out the files inside it is
-// the core's own business (see its libretro documentation), so nothing here
-// guesses at subdirectories.
-inline Result createCoreFolders(const Paths &p, const CoreEntry &e) {
+// Create one core's BIOS directory, "Bios/<TAG>/".  Only the tag directory is
+// created: how a core lays out the files inside it is the core's own business
+// (see its libretro documentation), so nothing here guesses at subdirectories.
+inline Result createBiosFolder(const Paths &p, const std::string &tag) {
+	Result r;
+	if (!safeTag(tag)) { r.err = "bad core tag " + tag; return r; }
+	mkdirs(p.biosDir(tag));
+	syncNow();
+	r.ok = true;
+	return r;
+}
+
+// Create one core's default ROM folders, e.g. "Roms/Sega Dreamcast
+// (LIBRETRO_FLYCAST)" and "Roms/Sega Naomi (LIBRETRO_FLYCAST)".  Existing
+// folders are skipped.
+inline Result createRomFolders(const Paths &p, const CoreEntry &e) {
 	Result r;
 	if (!safeTag(e.tag)) { r.err = "bad core tag " + e.tag; return r; }
-	mkdirs(p.biosDir(e.tag));
 	mkdirs(p.romsDir());
 	for (const std::string &f : e.folders) {
 		if (!safeFolderName(f)) continue;
@@ -1353,6 +1450,51 @@ inline Result createCoreFolders(const Paths &p, const CoreEntry &e) {
 	return r;
 }
 
+// Both at once: what the tool used to do as one button, kept for callers that
+// want the whole set (and for the tests).
+inline Result createCoreFolders(const Paths &p, const CoreEntry &e) {
+	Result r = createBiosFolder(p, e.tag);
+	if (!r.ok) return r;
+	return createRomFolders(p, e);
+}
+
+// Delete one ROM folder of a tag, recursively.  This is the only destructive
+// operation the tool offers, so the name must belong to the tag (folderTag) and
+// must not escape Roms/: callers pass a name they got from romFoldersForTag.
+inline Result deleteRomFolder(const Paths &p, const std::string &tag, const std::string &name) {
+	Result r;
+	if (!safeTag(tag)) { r.err = "bad core tag " + tag; return r; }
+	if (!safeFolderName(name)) { r.err = "bad folder name " + name; return r; }
+	if (folderTag(name) != tag) { r.err = "Roms/" + name + " does not belong to " + tag; return r; }
+	const std::string path = p.romsDir() + "/" + name;
+	struct stat st;
+	if (lstat(path.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
+		r.err = "no such folder Roms/" + name;
+		return r;
+	}
+	if (!removeTree(path)) { r.err = "cannot delete Roms/" + name; return r; }
+	syncNow();
+	r.ok = true;
+	return r;
+}
+
+// Delete a core's BIOS directory, recursively.  Same contract: the path is the
+// one minarch hands the core as its system directory, nothing else.
+inline Result deleteBiosFolder(const Paths &p, const std::string &tag) {
+	Result r;
+	if (!safeTag(tag)) { r.err = "bad core tag " + tag; return r; }
+	const std::string path = p.biosDir(tag);
+	struct stat st;
+	if (lstat(path.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
+		r.err = "no such folder Bios/" + tag;
+		return r;
+	}
+	if (!removeTree(path)) { r.err = "cannot delete Bios/" + tag; return r; }
+	syncNow();
+	r.ok = true;
+	return r;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // plain-text status (--status, and the device smoke test)
 
@@ -1361,6 +1503,7 @@ inline std::string statusText(const Paths &p, const Manifest &m) {
 	std::string out;
 	out += "platform   " + p.platform + "\n";
 	out += "state      " + std::string(frontendStateName(f.state)) + "\n";
+	out += "online     " + std::string(onlineUpdatesEnabled(p) ? "on" : "off") + "\n";
 	out += "active     " + (f.active.empty() ? std::string("missing") : shortHash(f.active)) + "\n";
 	out += "stock      " + (f.stock.empty() ? std::string("missing") : shortHash(f.stock)) + "\n";
 	out += "gl         " + (f.gl.empty() ? std::string("missing") : shortHash(f.gl)) + "\n";
