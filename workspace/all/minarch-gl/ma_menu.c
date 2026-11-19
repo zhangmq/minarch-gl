@@ -170,7 +170,12 @@ static struct {
 	}
 };
 
+/* Defined in the ma_options overlay: wraps the core option descriptions once,
+ * when the menu is up (the parsers run earlier, during Core_open). */
+extern void OptionList_wrapDescriptions(void);
+
 void Menu_init(void) {
+	OptionList_wrapDescriptions();
 	menu.overlay = SDL_CreateRGBSurfaceWithFormat(SDL_SWSURFACE,
 		DEVICE_WIDTH,DEVICE_HEIGHT,
 		screen->format->BitsPerPixel,screen->format->format);

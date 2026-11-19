@@ -28,6 +28,7 @@ workspace/all/minarch-gl/ma_environment.c  workspace/all/minarch/ma_environment.
 workspace/all/minarch-gl/ma_game.c         workspace/all/minarch/ma_game.c
 workspace/all/minarch-gl/ma_game.h         workspace/all/minarch/ma_game.h
 workspace/all/minarch-gl/ma_menu.c         workspace/all/minarch/ma_menu.c
+workspace/all/minarch-gl/ma_options.c      workspace/all/minarch/ma_options.c
 workspace/all/minarch-gl/ma_saves.c        workspace/all/minarch/ma_saves.c
 workspace/all/minarch-gl/ma_video.c        workspace/all/minarch/ma_video.c
 workspace/all/minarch-gl/ma_internal.h     workspace/all/minarch/ma_internal.h

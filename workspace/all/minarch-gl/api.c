@@ -953,6 +953,7 @@ int GFX_truncateText(TTF_Font *font, const char *in_name, char *out_name, int ma
 	while (text_width > max_width)
 	{
 		int len = strlen(out_name);
+		if (len < 4) break; /* no room for "..." */
 		strcpy(&out_name[len - 4], "...\0");
 		TTF_SizeUTF8(font, out_name, &text_width, NULL);
 		text_width += padding;
@@ -987,7 +988,12 @@ int GFX_wrapText(TTF_Font *font, char *str, int max_width, int max_lines)
 	int line_width;
 	int max_line_width = 0;
 	char *line = str;
-	char buffer[MAX_PATH];
+	/* Sized to the input: core option info strings can be longer than MAX_PATH,
+	 * and GFX_truncateText() strcpy()s the line into this buffer.  The fixed
+	 * MAX_PATH array overflowed the stack on parallel-dc's option table, which
+	 * then crashed the frontend in unrelated places (the 25-char key strncmp,
+	 * Menu_init's SDL surface). */
+	char buffer[strlen(str) + 1];
 
 	TTF_SizeUTF8(font, line, &line_width, NULL);
 	if (line_width <= max_width)
