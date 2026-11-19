@@ -1,0 +1,37 @@
+#!/bin/sh
+# MinarchGL.Installer.pakz -- runs at boot, from the card root, right after the
+# boot installer unpacked this archive over Tools/<plat>/MinarchGL Installer.pak/.
+#
+# Nothing here installs components: the pakz is the tool's own update path, the
+# one that needs no running binary and no network.  It only finishes what the
+# archive cannot do itself:
+#   * keep launch.sh and the elf executable (the archive carries the modes, the
+#     chmod is a cheap second line of defence on cards that lose them);
+#   * set the default online-updates state to ON, but only when the card has
+#     never had a preference -- a user's later choice is never overwritten;
+#   * log to .userdata/<plat>/logs and exit 0: the boot installer stops
+#     processing if a post_install.sh fails, and a tool update must not do that.
+S="${SDCARD_PATH:-/mnt/SDCARD}"
+P="${PLATFORM:-h700}"
+PAK="$S/Tools/$P/MinarchGL Installer.pak"
+STATE="$S/.userdata/$P/minarch-gl"
+
+mkdir -p "$S/.userdata/$P/logs" 2>/dev/null
+LOG="$S/.userdata/$P/logs/minarch-gl-installer-pakz.txt"
+exec >> "$LOG" 2>&1
+echo "installer pakz: starting $(date)"
+echo "installer pakz: card $S platform $P"
+
+chmod 0755 "$PAK/launch.sh" "$PAK/minarch-gl-installer.elf" 2>/dev/null
+
+if [ ! -f "$STATE/prefs" ]; then
+	mkdir -p "$STATE"
+	printf 'online=1\n' > "$STATE/prefs"
+	echo "installer pakz: online updates defaulted to on"
+else
+	echo "installer pakz: keeping the existing prefs"
+fi
+
+sync
+echo "installer pakz: done"
+exit 0

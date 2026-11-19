@@ -1,0 +1,68 @@
+#!/bin/sh
+# MinarchGL.Full_<plat>.pakz -- runs at boot, from the card root, right after the
+# boot installer unpacked this archive.  It carries the installer pak, the
+# frontend and the core paks, so one file installs or updates everything without
+# a network on the device.
+#
+# The actual work is the installer's own CLI, pointed at the assets this archive
+# unpacked (MINARCHGL_BASE_URL=file://...): the same checksum checks, stock
+# backup, atomic replacement and enabled/disabled handling as the UI.  This
+# script only decides what to call and what the defaults should be.
+#
+# Logs and exits 0 even when something fails: the boot installer stops
+# processing the rest of its steps when a post_install.sh returns non-zero, and
+# a bad pack must not do that -- the log says what happened.
+S="${SDCARD_PATH:-/mnt/SDCARD}"
+P="${PLATFORM:-h700}"
+PAK="$S/Tools/$P/MinarchGL Installer.pak"
+I="$PAK/minarch-gl-installer.elf"
+PACK="$S/MinarchGL.Pack"
+STATE="$S/.userdata/$P/minarch-gl"
+TAGS="@TAGS@"
+
+mkdir -p "$S/.userdata/$P/logs" 2>/dev/null
+LOG="$S/.userdata/$P/logs/minarch-gl-full-pack.txt"
+exec >> "$LOG" 2>&1
+echo "full pack: starting $(date)"
+echo "full pack: card $S platform $P"
+
+# The boot installer exports this before running a pakz script, but the script
+# can also be replayed by hand (device tests, support): the installer elf is a
+# dynamic binary and needs NextUI's SDL2 runtime from .system/<plat>/lib.
+export LD_LIBRARY_PATH="$S/.system/$P/lib:/usr/lib:/usr/lib/aarch64-linux-gnu:/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+chmod 0755 "$PAK/launch.sh" "$I" 2>/dev/null
+
+if [ -x "$I" ] && [ -d "$PACK" ]; then
+	export MINARCHGL_BASE_URL="file://$PACK"
+	if "$I" --install; then
+		echo "full pack: frontend installed"
+	else
+		echo "full pack: frontend install FAILED"
+	fi
+	for t in $TAGS; do
+		if "$I" --core-install "$t"; then
+			echo "full pack: $t installed"
+		else
+			echo "full pack: $t FAILED"
+		fi
+	done
+	unset MINARCHGL_BASE_URL
+else
+	echo "full pack: installer or payload missing; nothing installed"
+fi
+rm -rf "$PACK"
+
+# The Full Pack is the offline channel: default to online updates OFF, but only
+# when the card has never had a preference.
+if [ ! -f "$STATE/prefs" ]; then
+	mkdir -p "$STATE"
+	printf 'online=0\n' > "$STATE/prefs"
+	echo "full pack: online updates defaulted to off"
+else
+	echo "full pack: keeping the existing prefs"
+fi
+
+sync
+echo "full pack: done"
+exit 0
