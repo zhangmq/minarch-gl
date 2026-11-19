@@ -27,6 +27,7 @@ DIST="$ROOT/dist"
 PAKS="$ROOT/build/paks"
 CORES_MK="$ROOT/gles-cores/$PLAT/makefile"
 CORES_LIST="$ROOT/gles-cores/$PLAT/cores.list"
+CORES_PATCHES="$ROOT/gles-cores/$PLAT/patches"
 
 pin() { sed -n "s/^$1_$2[[:space:]]*=[[:space:]]*//p" "$CORES_MK" | head -1; }
 
@@ -63,7 +64,7 @@ while read -r tag core folders; do
 	need_json_safe "tag" "$tag"
 	need_json_safe "core" "$core"
 	need_json_safe "folders" "$folders"
-	pin_value=$(short_pin "$(pin "$core" HASH)")
+	pin_value=$(core_pin "$core" "$(pin "$core" HASH)" "$CORES_PATCHES")
 	[ -n "$pin_value" ] || die "no ${core}_HASH in $CORES_MK"
 	pak="$PAKS/$tag.pak"
 	if [ ! -d "$pak" ]; then

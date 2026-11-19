@@ -30,6 +30,20 @@ sha256() { sha256sum "$1" | cut -d' ' -f1; }
 # file and the one the manifest publishes.
 short_pin() { printf '%s' "$1" | cut -c1-8; }
 
+# What a core pak and the manifest publish as the core's identity.  A core's
+# binary can change without its source commit changing when this repository
+# patches it (patches/<core>.patch), and the installer compares this string:
+# an unchanged pin would leave every installed copy "current".  So a patched
+# core gets a four-hex suffix derived from the patch; unpatched cores keep the
+# commit prefix alone.
+core_pin() { # core_pin <core> <commit> <patches-dir>
+	_pin=$(short_pin "$2")
+	if [ -f "$3/$1.patch" ]; then
+		_pin="$_pin.$(sha256sum "$3/$1.patch" | cut -c1-4)"
+	fi
+	printf '%s' "$_pin"
+}
+
 # MinarchGL's own tag list, as one line ("LIBRETRO_A LIBRETRO_B ..."), read from
 # the per-platform core table.  Comments and blank lines are skipped.
 core_tags() {

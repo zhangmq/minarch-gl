@@ -37,6 +37,7 @@ CORES_MK="$ROOT/gles-cores/$CORES_PLATFORM/makefile"
 # The core table: tag, core name and the ROM folders each tag owns.  Release
 # manifests and the pak staging both read it, so the three cannot drift.
 CORES_LIST="$ROOT/gles-cores/$CORES_PLATFORM/cores.list"
+CORES_PATCHES="$ROOT/gles-cores/$CORES_PLATFORM/patches"
 
 command -v docker >/dev/null || die "docker is required (toolchain image $IMG)"
 command -v git >/dev/null || die "git is required (core source pins)"
@@ -326,10 +327,10 @@ while read -r tag core folders; do
 	cp -a "$src/." "$dst/"
 	cp -f "$core_so" "$dst/${core}_libretro.so"
 	chmod 0755 "$dst/launch.sh"
-	# What the installer compares against the manifest: the core name and the
-	# commit it was built from.  Written at packaging time because this is the
-	# only place that knows both.
-	printf '%s %s\n' "$core" "$(short_pin "$(pin "$core" HASH)")" > "$dst/version"
+	# What the installer compares against the manifest: the core name and its
+	# pin (commit + patch hash, see core_pin).  Written at packaging time
+	# because this is the only place that knows both.
+	printf '%s %s\n' "$core" "$(core_pin "$core" "$(pin "$core" HASH)" "$CORES_PATCHES")" > "$dst/version"
 	# A pak is a binary distribution: the frontend half is PolyForm
 	# Noncommercial (LICENSE + NOTICE), the core half is GPLv2 and ships its
 	# own licence text.  The pins/source links live in NOTICE.
@@ -337,7 +338,7 @@ while read -r tag core folders; do
 	core_lic="$CORE_CACHE/$core/LICENSE"
 	[ -f "$core_lic" ] || die "missing $core_lic (licence text for $core)"
 	cp -f "$core_lic" "$dst/LICENSE-$core"
-	echo "staged: build/paks/$tag.pak <- $core $(short_pin "$(pin "$core" HASH)")" >&2
+	echo "staged: build/paks/$tag.pak <- $core $(core_pin "$core" "$(pin "$core" HASH)" "$CORES_PATCHES")" >&2
 done < "$CORES_LIST"
 
 say "done"
