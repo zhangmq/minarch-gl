@@ -1,5 +1,11 @@
 # minarch-gl
 
+> [!WARNING]
+> This project works by replacing NextUI's `minarch.elf` on your SD card.
+> Unexpected bugs are possible, and updates here may lag behind NextUI changes.
+> The installer keeps a backup and can restore stock, but please judge the risk
+> yourself before installing.
+
 An experimental **GL/hw-render frontend for NextUI on H700 devices**
 (RG28XX / RG34XX / RG35XX / RG40XX / RGcubeXX / RGSP …).
 
