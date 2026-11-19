@@ -921,10 +921,17 @@ inline Manifest loadManifest(const Paths &p, const Env &env, bool allowNetwork,
 		const std::string tmpSums = p.dlDir() + "/.SHA256SUMS.part";
 		report(progress, env.online ? "Checking" : "Reading", env.online ? "for updates" : "local data");
 		std::string e1, e2;
-		// Two requests with a shared budget of ~5 s: the manifest gets the larger
-		// half because it is the one the screen waits for.
-		const bool gotList = env.fetch(env.urlFor(kCoreListName), tmpList, 3, e1);
-		const bool gotSums = env.fetch(env.urlFor(kSumsName), tmpSums, 2, e2);
+		// Two requests, each with a generous budget: a proxied path (or a slow
+		// link) can spend several seconds on connect + TLS + the release
+		// redirect, while the screen already shows the busy state.  The old
+		// 3 s / 2 s split let SHA256SUMS time out on a cold proxy connection
+		// and surface as the generic "No network" message.
+		const bool gotList = env.fetch(env.urlFor(kCoreListName), tmpList, 8, e1);
+		const bool gotSums = env.fetch(env.urlFor(kSumsName), tmpSums, 8, e2);
+		// A failed fetch used to disappear into that generic message; the log is
+		// the only place a user can see which request failed and why.
+		if (!gotList) fprintf(stderr, "manifest: %s: %s\n", kCoreListName, e1.empty() ? "fetch failed" : e1.c_str());
+		if (!gotSums) fprintf(stderr, "manifest: %s: %s\n", kSumsName, e2.empty() ? "fetch failed" : e2.c_str());
 		// GitHub answers 404 when the repository has no release yet (or the
 		// latest one carries no manifest).  That is not a network failure and
 		// should not be reported as one.
