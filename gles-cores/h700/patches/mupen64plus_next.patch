@@ -1,0 +1,63 @@
+--- a/libretro/libretro.c
++++ b/libretro/libretro.c
+@@ -654,7 +654,11 @@
+     info->library_name = "Mupen64Plus-Next";
+     info->library_version = "2.8" FLAVOUR_VERSION GIT_VERSION;
+     info->valid_extensions = "n64|v64|z64|bin|u1";
+-    info->need_fullpath = false;
++    /* minarch-gl (h700): the front end hands over the path and the core reads
++       the ROM itself.  With need_fullpath == false the front end loads the
++       whole file and this core immediately memcpy()s it into game_data, so the
++       same ROM is resident twice for the whole session. */
++    info->need_fullpath = true;
+     info->block_extract = false;
+ }
+ 
+@@ -1980,9 +1984,44 @@
+     }
+ #endif
+ 
+-    game_data = malloc(game->size);
+-    memcpy(game_data, game->data, game->size);
+-    game_size = game->size;
++    /* need_fullpath front ends pass the path only (game->data == NULL): read
++       the ROM here.  Front ends that still hand over data (RetroArch, or a
++       core loaded by an older front end) keep the original path. */
++    if (game->data && game->size)
++    {
++        game_data = malloc(game->size);
++        if (!game_data)
++            return false;
++        memcpy(game_data, game->data, game->size);
++        game_size = game->size;
++    }
++    else if (game->path)
++    {
++        FILE *rom = fopen(game->path, "rb");
++        long rom_size;
++        if (!rom)
++            return false;
++        if (fseek(rom, 0, SEEK_END) != 0 || (rom_size = ftell(rom)) <= 0 || (unsigned long)rom_size > 0xffffffffUL)
++        {
++            fclose(rom);
++            return false;
++        }
++        rewind(rom);
++        game_data = malloc((size_t)rom_size);
++        if (!game_data || fread(game_data, 1, (size_t)rom_size, rom) != (size_t)rom_size)
++        {
++            fclose(rom);
++            free(game_data);
++            game_data = NULL;
++            return false;
++        }
++        fclose(rom);
++        game_size = (uint32_t)rom_size;
++    }
++    else
++    {
++        return false;
++    }
+ 
+     if (!emu_step_load_data())
+         return false;
