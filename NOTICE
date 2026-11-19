@@ -1,6 +1,6 @@
 NOTICE
 
-minarch-gl is a community frontend overlay for NextUI (Anbernic H700 devices).
+minarch-gl is a community frontend overlay for NextUI (H700 devices).
 
 Upstream
   NextUI       https://github.com/LoveRetro/NextUI
@@ -24,7 +24,7 @@ Bundled cores (GPLv2, shipped as separate .so files inside each pak)
 
 Relation to upstream
   This repository is not affiliated with or endorsed by NextUI, LoveRetro,
-  MinUI, TrimUI or Anbernic. It is an experimental downstream project. Files
+  MinUI, TrimUI or the device vendor. It is an experimental downstream project. Files
   under workspace/all/minarch-gl/ that share a name with an upstream file are
   modified copies of that file; the rest of the frontend sources used at build
   time come unmodified from the pinned NextUI tree.

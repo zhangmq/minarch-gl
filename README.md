@@ -1,6 +1,6 @@
 # minarch-gl
 
-An experimental **GL/hw-render frontend for NextUI on Anbernic H700 devices**
+An experimental **GL/hw-render frontend for NextUI on H700 devices**
 (RG28XX / RG34XX / RG35XX / RG40XX / RGcubeXX / RGSP …).
 
 Stock NextUI's `minarch` implements libretro's *video output* with OpenGL
@@ -27,7 +27,7 @@ options, savestates, resume and shaders while running the cores above.
 ## Not official
 
 This is a **community, non-official** project. It is not affiliated with or
-endorsed by LoveRetro/NextUI, MinUI, TrimUI or Anbernic. Report issues here, not
+endorsed by LoveRetro/NextUI, MinUI, TrimUI or the device vendor. Report issues here, not
 upstream. The source is derived from NextUI, which is licensed under PolyForm
 Noncommercial 1.0.0 — see `LICENSE` and `NOTICE`. Do not use it commercially.
 
