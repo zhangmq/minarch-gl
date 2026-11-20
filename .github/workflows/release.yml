@@ -84,6 +84,7 @@ jobs:
             dist/LIBRETRO_FLYCAST_h700.pak.tar.gz
             dist/LIBRETRO_MUPEN64PLUS_h700.pak.tar.gz
             dist/LIBRETRO_YABASANSHIRO_h700.pak.tar.gz
+            dist/LIBRETRO_SWANSTATION_h700.pak.tar.gz
             dist/MinarchGL.Installer.pak.zip
             dist/MinarchGL.Installer.pakz
             dist/MinarchGL.Full_h700.pakz
