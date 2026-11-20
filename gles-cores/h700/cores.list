@@ -22,3 +22,4 @@ LIBRETRO_MUPEN64PLUS       mupen64plus_next    Nintendo 64
 LIBRETRO_YABASANSHIRO      yabasanshiro        Sega Saturn;Sega Titan Video
 LIBRETRO_SWANSTATION       swanstation         Sony PlayStation
 LIBRETRO_PPSSPP            ppsspp              PlayStation Portable
+LIBRETRO_FLYCASTROPHE      flycastrophe        Sega Dreamcast;Sega Naomi

@@ -82,6 +82,7 @@ jobs:
             dist/SHA256SUMS
             dist/minarch-gl_h700.elf
             dist/LIBRETRO_FLYCAST_h700.pak.tar.gz
+            dist/LIBRETRO_FLYCASTROPHE_h700.pak.tar.gz
             dist/LIBRETRO_MUPEN64PLUS_h700.pak.tar.gz
             dist/LIBRETRO_YABASANSHIRO_h700.pak.tar.gz
             dist/LIBRETRO_SWANSTATION_h700.pak.tar.gz

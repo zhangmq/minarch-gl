@@ -20,6 +20,7 @@ CORES+= mupen64plus_next
 CORES+= yabasanshiro
 CORES+= swanstation
 CORES+= ppsspp
+CORES+= flycastrophe
 
 ###############################
 
@@ -191,6 +192,48 @@ ppsspp_MAKE = mkdir -p ../glshim && \
 	LIBRARY_PATH=../glshim CXXFLAGS="$(ppsspp_flags)" CFLAGS="$(ppsspp_flags)" \
 	LDFLAGS="-L../glshim -lstdc++fs -Wl,--no-as-needed" \
 	make -f Makefile platform=arm64-gles
+
+# flycastrophe: Dreamcast / NAOMI, Flycast plus Deadcast's speed work, GLES.
+#
+# Upstream is Helaas/Flycastrophe, a fork of flyinghead/flycast that follows
+# upstream master by merge and ports the speed changes of Deadcast (a trimmed
+# Flycast for a handheld).  It trades accuracy for speed on purpose and its
+# libretro options default to the fast path, so it ships as its own tag and its
+# own ROM folders -- it does not replace flycast.  H700 measurement, Naomi
+# Crazy Taxi, same scene and toolchain: 54.6 fps against flycast's 31.8; games
+# that already hold 60 fps see no change.
+#
+# -DFLYCASTROPHE=ON names the output flycastrophe_libretro.so and reports the
+# library as "Flycastrophe".  GL needs no shim here: the core calls everything
+# through get_proc_address, so --as-needed drops the unused libGLESv2 exactly
+# as it does for flycast.
+#
+# patches/flycastrophe.patch is the gcc 8.3 workaround.  The toolchain ICEs
+# ("in gen_reg_rtx, at emit-rtl.c:1187") on the static InterruptSourceList
+# initializer at every -O level, because the entries take &INTC_IPx.reg_data
+# through the register unions; the patch takes the address of the plain
+# register word instead, which is the same address.
+flycastrophe_REPO = https://github.com/Helaas/Flycastrophe
+flycastrophe_HASH = 1d7ef4ed8640230a728dee0517a6088e2ff470fa
+# Exactly the four submodules a GLES libretro build reads (their CI's list).
+# The template updates non-recursively, so MAKE re-runs tinygettext recursively
+# for its external/tinycmmc; libchdr's deps/{zlib,zstd,lzma} are plain
+# directories in this tree, not submodules.
+flycastrophe_SUBMODULES = core/deps/asio core/deps/libchdr core/deps/rcheevos core/deps/tinygettext
+flycastrophe_CORE = build-h700/flycastrophe_libretro.so
+# -lstdc++fs: gcc 8 keeps std::filesystem in its own library and the tree links
+# with --no-undefined (oslib/file_system.cpp).
+# -DHAVE_ARC4RANDOM=OFF: pin libzip to its own generator.  The 2.28 sysroot
+# makes the probe fail anyway; pinning it keeps the build identical if the
+# toolchain image ever moves to a libc that has arc4random.
+flycastrophe_MAKE = git submodule update --init --recursive core/deps/tinygettext && \
+	cmake -S . -B build-h700 -DCMAKE_BUILD_TYPE=Release -DLIBRETRO=ON -DFLYCASTROPHE=ON \
+		-DUSE_GLES=ON -DUSE_VULKAN=OFF -DUSE_OPENMP=OFF -DUSE_HOST_LIBZIP=OFF \
+		-DHAVE_ARC4RANDOM=OFF \
+		-DCMAKE_C_FLAGS="-fomit-frame-pointer -ffast-math -mtune=cortex-a53 -mcpu=cortex-a53 -march=armv8-a -fno-common" \
+		-DCMAKE_CXX_FLAGS="-fomit-frame-pointer -ffast-math -mtune=cortex-a53 -mcpu=cortex-a53 -march=armv8-a -fno-common -D_GNU_SOURCE" \
+		-DCMAKE_CXX_STANDARD_LIBRARIES="-lstdc++fs" && \
+	cmake --build build-h700 --target flycast_libretro -- $(PROCS)
 
 ###############################
 

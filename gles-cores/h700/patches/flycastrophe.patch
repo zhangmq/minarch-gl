@@ -1,0 +1,23 @@
+diff --git a/core/hw/sh4/sh4_interrupts.cpp b/core/hw/sh4/sh4_interrupts.cpp
+index 49a3be4..003aebf 100644
+--- a/core/hw/sh4/sh4_interrupts.cpp
++++ b/core/hw/sh4/sh4_interrupts.cpp
+@@ -24,9 +24,15 @@ const u16 IRLPriority = 0x0246;
+ #define IRLP11 &IRLPriority,4
+ #define IRLP13 &IRLPriority,8
+ 
+-#define GIPA(p) &INTC_IPRA.reg_data,4*p
+-#define GIPB(p) &INTC_IPRB.reg_data,4*p
+-#define GIPC(p) &INTC_IPRC.reg_data,4*p
++// h700 toolchain patch (minarch-gl): g++ 8.3 ICEs ("in gen_reg_rtx, at
++// emit-rtl.c:1187") building the static InterruptSourceList initializer when the
++// pointers come from the register unions' reg_data member.  Taking the address
++// of the plain register word and casting it to u16* builds the same table with
++// the same addresses and compiles at every -O level.  Only the initializer
++// reads these macros; GetPrLvl() still goes through the union lvalues.
++#define GIPA(p) (u16*)&SH4IO_REG(INTC, IPRA),4*p
++#define GIPB(p) (u16*)&SH4IO_REG(INTC, IPRB),4*p
++#define GIPC(p) (u16*)&SH4IO_REG(INTC, IPRC),4*p
+ 
+ struct InterptSourceList_Entry
+ {
