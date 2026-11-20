@@ -19,6 +19,7 @@ CORES= flycast
 CORES+= mupen64plus_next
 CORES+= yabasanshiro
 CORES+= swanstation
+CORES+= ppsspp
 
 ###############################
 
@@ -156,6 +157,40 @@ swanstation_cflags = -O3 -DNDEBUG -fomit-frame-pointer -fno-strict-aliasing \
 swanstation_MAKE = CXXFLAGS="$(swanstation_cflags)" CFLAGS="$(swanstation_cflags)" \
 	make -f Makefile.libretro platform=unix CPU_ARCH=aarch64
 swanstation_SUBMODULES =
+
+# ppsspp: PlayStation Portable, GLES 2/3 hw-render.
+#
+# The libretro port is in the upstream tree under libretro/ and needs the
+# submodules (16 of them: libpng, ffmpeg, glslang, ...), so build.sh preclones
+# and updates them before the template runs.  The platform is arm64-gles, not
+# the template's h700: PPSSPP's Makefile only knows its own platform names.
+#
+# The four build fixes live in patches/ppsspp.patch: no X11/Vulkan define,
+# the gcc 8.3 copysign ICE workaround, the IndependentTask CTAD replacement,
+# the libpng arm64 NEON sources and the TransformUnit -O1 override.
+#
+# glshim is a link-time-only shim: the H700 sysroot has libEGL/libGLESv2
+# stubs, but the vendor entry points are all in libmali.so.0.  The symlinks
+# make -lGLESv2/-lEGL resolve to libmali; at runtime the device's libmali
+# provides the symbols (DT_NEEDED is libmali.so.0).  -lstdc++fs is for the
+# armips <filesystem> use under gcc 8.
+ppsspp_REPO = https://github.com/hrydgard/ppsspp
+ppsspp_HASH = 2b5715ece170ee4154dba3360807204a0c4b6bdd
+ppsspp_BUILD_PATH = ppsspp/libretro
+ppsspp_CORE = ppsspp_libretro.so
+# Only the submodules the libretro build actually reads.  A blank value would
+# make build.sh fall back to `--recursive` over everything, including
+# pspautotests/frametests (large test trees) and the Android oboe backend.
+ppsspp_SUBMODULES = ext/OpenXR-SDK ext/SPIRV-Cross ext/aemu_postoffice ext/armips ext/cpu_features ext/discord-rpc ext/freetype ext/glslang ext/libadrenotools ext/libchdr ext/lua ext/miniupnp ext/nanosvg ext/rapidjson ext/rcheevos ext/zstd libretro/libretro-common
+ppsspp_flags = -O3 -DNDEBUG -fomit-frame-pointer -fno-strict-aliasing \
+	-fno-tree-vectorize -march=armv8-a+crc+fp+simd -mcpu=cortex-a53 \
+	-mtune=cortex-a53 -D_GNU_SOURCE
+ppsspp_MAKE = mkdir -p ../glshim && \
+	ln -sf /workspace/h700/cores/h700-deps/lib/libmali.so.0 ../glshim/libGLESv2.so && \
+	ln -sf /workspace/h700/cores/h700-deps/lib/libmali.so.0 ../glshim/libEGL.so && \
+	LIBRARY_PATH=../glshim CXXFLAGS="$(ppsspp_flags)" CFLAGS="$(ppsspp_flags)" \
+	LDFLAGS="-L../glshim -lstdc++fs" \
+	make -f Makefile platform=arm64-gles
 
 ###############################
 

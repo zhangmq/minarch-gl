@@ -28,7 +28,7 @@ DIST="$ROOT/dist"
 PAKS="$ROOT/build/paks"
 CORE_CACHE="$ROOT/.cache/cores"
 DEPS_CACHE="$ROOT/.cache/frontend-deps"
-ALL_CORES="flycast mupen64plus_next yabasanshiro swanstation"
+ALL_CORES="flycast mupen64plus_next yabasanshiro swanstation ppsspp"
 # Per-platform core builds live in gles-cores/<plat>/, mirroring NextUI's
 # workspace/<plat>/ split.  These cores are not upstream ones we maintain, so
 # they are not part of the workspace overlay.  h700 is the only platform today.
@@ -293,7 +293,9 @@ preclone() {
 		git -C "$d" fetch --depth 1 origin "$hash"
 		git -C "$d" checkout --detach "$hash"
 	fi
-	if [ -n "$sub" ]; then
+	if [ "$sub" = "ALL" ]; then
+		git -C "$d" submodule update --init --recursive
+	elif [ -n "$sub" ]; then
 		git -C "$d" submodule update --init --recursive $sub
 	fi
 	mkdir -p "$TREE/workspace/$CORES_PLATFORM/cores/src"
@@ -326,6 +328,14 @@ while read -r tag core folders; do
 	mkdir -p "$dst"
 	cp -a "$src/." "$dst/"
 	cp -f "$core_so" "$dst/${core}_libretro.so"
+	# PPSSPP needs its version-matched asset bundle (fonts, flash0,
+	# ppge_atlas, compat.ini).  Ship the pinned source's assets unmodified;
+	# the H700 4-line delta is the pak's separate compat.ini, copied to the
+	# user override path by launch.sh.
+	if [ "$core" = "ppsspp" ]; then
+		[ -d "$CORE_CACHE/ppsspp/assets" ] || die "missing $CORE_CACHE/ppsspp/assets"
+		cp -a "$CORE_CACHE/ppsspp/assets" "$dst/assets"
+	fi
 	chmod 0755 "$dst/launch.sh"
 	# What the installer compares against the manifest: the core name and its
 	# pin (commit + patch hash, see core_pin).  Written at packaging time
@@ -336,6 +346,7 @@ while read -r tag core folders; do
 	# own licence text.  The pins/source links live in NOTICE.
 	cp -f "$ROOT/LICENSE" "$ROOT/NOTICE" "$dst/"
 	core_lic="$CORE_CACHE/$core/LICENSE"
+	[ -f "$core_lic" ] || core_lic="$CORE_CACHE/$core/LICENSE.TXT"
 	[ -f "$core_lic" ] || die "missing $core_lic (licence text for $core)"
 	cp -f "$core_lic" "$dst/LICENSE-$core"
 	echo "staged: build/paks/$tag.pak <- $core $(core_pin "$core" "$(pin "$core" HASH)" "$CORES_PATCHES")" >&2

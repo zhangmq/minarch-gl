@@ -1,7 +1,7 @@
 {
   "name": "MinarchGL Installer",
   "type": "TOOL",
-  "description": "Installs, updates and removes MinarchGL (GL/hw-render for Dreamcast, Naomi, Nintendo 64, Saturn, ST-V and PlayStation) and its core paks. Components come from this project's GitHub releases; the installer also switches NextUI's frontend between stock and MinarchGL.",
+  "description": "Installs, updates and removes MinarchGL (GL/hw-render for Dreamcast, Naomi, Nintendo 64, Saturn, ST-V, PlayStation and PlayStation Portable) and its core paks. Components come from this project's GitHub releases; the installer also switches NextUI's frontend between stock and MinarchGL.",
   "author": "zhangmq",
   "repo_url": "https://github.com/zhangmq/minarch-gl",
   "release_filename": "MinarchGL.Installer.pak.zip",
@@ -9,5 +9,5 @@
     "h700"
   ],
   "launch": "launch.sh",
-  "version": "0.1.4"
+  "version": "0.1.5"
 }

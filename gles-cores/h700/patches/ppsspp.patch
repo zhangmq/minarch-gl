@@ -1,0 +1,87 @@
+diff --git a/Common/Thread/Promise.h b/Common/Thread/Promise.h
+index 9a98ac1..f392d34 100644
+--- a/Common/Thread/Promise.h
++++ b/Common/Thread/Promise.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include <functional>
++#include <utility>
+ #include <mutex>
+ 
+ #include "Common/Log.h"
+@@ -23,6 +24,13 @@ class IndependentTask : public Task {
+ 	TaskPriority prio_;
+ };
+ 
++// GCC 8.3 does not deduce class template arguments for `new`; this helper
++// keeps move-only lambdas working without spelling their type.
++template<class T>
++IndependentTask<T> *MakeIndependentTask(TaskType type, TaskPriority prio, T &&func) {
++	return new IndependentTask<T>(type, prio, std::forward<T>(func));
++}
++
+ template<class T>
+ class PromiseTask : public Task {
+ public:
+diff --git a/Core/Screenshot.cpp b/Core/Screenshot.cpp
+index 5401c55..8b17041 100644
+--- a/Core/Screenshot.cpp
++++ b/Core/Screenshot.cpp
+@@ -396,7 +396,7 @@ bool ScreenshotNotifyPostGameRender(Draw::DrawContext *draw) {
+ }
+ 
+ static void SaveScreenshotAsync(GPUDebugBuffer &&buf, int w, int h, int maxRes) {
+-	g_threadManager.EnqueueTask(new IndependentTask(TaskType::IO_BLOCKING, TaskPriority::LOW,
++	g_threadManager.EnqueueTask(MakeIndependentTask(TaskType::IO_BLOCKING, TaskPriority::LOW,
+ 		[filename = std::move(g_pendingScreenshot.path), buf = std::move(buf), callback = std::move(g_pendingScreenshot.callback), fmt = g_pendingScreenshot.format, w, h, maxRes]() {
+ 		u8 *flipbuffer = nullptr;
+ 		u32 width = w, height = h;
+diff --git a/GPU/Software/GEMath.h b/GPU/Software/GEMath.h
+index 0998a84..1c06b9c 100644
+--- a/GPU/Software/GEMath.h
++++ b/GPU/Software/GEMath.h
+@@ -115,7 +115,9 @@ inline float GERecip(float w) {
+ 	const int32_t q = (64 * seg.b + 63 + seg.m * (int32_t)(i & 255)) >> 7;  // 1 / 1.i in units of 2^-16
+ 	if (e >= 126) {
+ 		// The result can be a denormal (q is at most 2^16).
+-		return copysign(ldexpf((float)q, -16 - e), w);
++		// GCC 8.3 aarch64 ICEs on copysign here; use the sign bit directly.
++		const float r = ldexpf((float)q, -16 - e);
++		return (bits & 0x80000000u) ? -r : r;
+ 	}
+ 	return ScaleByPow2((float)q, -16 - e, bits & 0x80000000);
+ }
+diff --git a/libretro/Makefile.common b/libretro/Makefile.common
+index 5c5f947..2e869be 100644
+--- a/libretro/Makefile.common
++++ b/libretro/Makefile.common
+@@ -710,7 +710,8 @@ SOURCES_CXX += $(COMMONDIR)/MemArenaHorizon.cpp \
+ 	       $(COMMONDIR)/MemoryUtilHorizon.cpp \
+ 	       $(EXTDIR)/glslang/glslang/OSDependent/Unix/ossource.cpp
+ else
+-COREFLAGS += -DVK_USE_PLATFORM_XLIB_KHR
++# H700 GLES build: no X11 headers/toolkit; Vulkan is not used.
++# COREFLAGS += -DVK_USE_PLATFORM_XLIB_KHR
+ SOURCES_CXX += $(COMMONDIR)/MemArenaPosix.cpp \
+ 	       $(EXTDIR)/glslang/glslang/OSDependent/Unix/ossource.cpp
+ endif
+@@ -1017,6 +1018,11 @@ ifeq ($(WITH_DYNAREC),1)
+ 		endif
+ 	else ifeq ($(TARGET_ARCH),arm64)
+       DYNAFLAGS += -D_ARCH_64
++      # libpng17's arm/ sources are not ARMv7-only: arm_init.c and the
++      # intrinsics filter build for AArch64 too, and pngrutil references
++      # png_init_filter_functions_neon.  filter_neon.S is ARMv7 asm, skip it.
++      SOURCES_C += $(EXTDIR)/libpng17/arm/arm_init.c \
++                   $(EXTDIR)/libpng17/arm/filter_neon_intrinsics.c
+       SOURCES_CXX += $(COMMONDIR)/Arm64Emitter.cpp \
+ 		     $(COREDIR)/MIPS/ARM64/Arm64IRAsm.cpp \
+ 		     $(COREDIR)/MIPS/ARM64/Arm64IRCompALU.cpp \
+@@ -1214,3 +1220,6 @@ ifneq ($(GIT_VERSION_NO_UPDATE),1)
+ endif
+ 
+ SOURCES_CXX += $(GIT_VERSION_SRC)
++
++# GCC 8.3 aarch64 ICEs expanding copysign in this file at -O2; -O1 works.
++../GPU/Software/TransformUnit.o: CXXFLAGS += -O1

@@ -20,6 +20,8 @@ Bundled cores (GPLv2/GPLv3, shipped as separate .so files inside each pak)
                      @ eb32d3f9667ca1e00afcf633881c9484624b8f6f (branch h700-libretro)
   swanstation        https://github.com/libretro/swanstation
                      @ 631f0fb31b809e0f889d7c551fe695788e39c1d3 (GPLv3)
+  ppsspp             https://github.com/hrydgard/ppsspp
+                     @ 2b5715ece170ee4154dba3360807204a0c4b6bdd (GPLv2)
   Each pak ships the full licence text of its core next to it as
   LICENSE-<core>; the pins above are the sources those binaries were built
   from, with the recipes in gles-cores/h700/makefile.
