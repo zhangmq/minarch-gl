@@ -85,3 +85,52 @@ index 5c5f947..2e869be 100644
 +
 +# GCC 8.3 aarch64 ICEs expanding copysign in this file at -O2; -O1 works.
 +../GPU/Software/TransformUnit.o: CXXFLAGS += -O1
+diff --git a/libretro/Makefile b/libretro/Makefile
+index ae8d3f0..d0fd2b0 100644
+--- a/libretro/Makefile
++++ b/libretro/Makefile
+@@ -56,7 +56,7 @@ TARGET_NAME := ppsspp
+ # Unix
+ ifneq (,$(findstring unix,$(platform)))
+ 	TARGET := $(TARGET_NAME)_libretro.so
+-	LDFLAGS += -shared -Wl,--version-script=link.T -Wl,--no-undefined
++	LDFLAGS += -shared -Wl,--version-script=link.T -Wl,--unresolved-symbols=ignore-all
+ 
+ 	fpic = -fPIC
+ 	ifneq (,$(findstring gles,$(platform)))
+@@ -89,7 +89,7 @@ else ifneq (,$(findstring arm64,$(platform)))
+ 	TARGET := $(TARGET_NAME)_libretro.so
+ 	TARGET_ARCH = arm64
+ 	fpic := -fPIC
+-	LDFLAGS += -shared -Wl,--version-script=link.T -Wl,--no-undefined
++	LDFLAGS += -shared -Wl,--version-script=link.T -Wl,--unresolved-symbols=ignore-all
+ 	INCFLAGS += -I.
+ 	HAVE_NEON=1
+ 	ifneq (,$(findstring gles,$(platform)))
+@@ -226,7 +226,7 @@ else ifeq ($(platform), libnx)
+ else ifneq (,$(findstring android,$(platform)))
+ 	fpic = -fPIC
+ 	TARGET := $(TARGET_NAME)_libretro_android.so
+-	LDFLAGS += -shared -Wl,--version-script=link.T -Wl,--no-undefined -Wl,--warn-common
++	LDFLAGS += -shared -Wl,--version-script=link.T -Wl,--unresolved-symbols=ignore-all -Wl,--warn-common
+ 	GL_LIB := -lGLESv2
+ 
+ 	CC = arm-linux-androideabi-gcc
+@@ -247,7 +247,7 @@ else ifneq (,$(findstring android,$(platform)))
+ else ifeq ($(platform), qnx)
+ 	fpic = -fPIC
+ 	TARGET := $(TARGET_NAME)_libretro_qnx.so
+-	LDFLAGS += -shared -Wl,--version-script=link.T -Wl,--no-undefined -Wl,--warn-common
++	LDFLAGS += -shared -Wl,--version-script=link.T -Wl,--unresolved-symbols=ignore-all -Wl,--warn-common
+ 	GL_LIB := -lGLESv2
+ 
+ 	CC = qcc -Vgcc_ntoarmv7le
+@@ -268,7 +268,7 @@ else ifneq (,$(findstring armv,$(platform)))
+ 	TARGET := $(TARGET_NAME)_libretro.so
+ 	TARGET_ARCH = armv7
+ 	fpic := -fPIC
+-	LDFLAGS += -shared -Wl,--version-script=link.T -Wl,--no-undefined
++	LDFLAGS += -shared -Wl,--version-script=link.T -Wl,--unresolved-symbols=ignore-all
+ 	INCFLAGS += -I.
+ 	ifneq (,$(findstring gles,$(platform)))
+ 		GLES := 1

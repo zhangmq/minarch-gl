@@ -189,7 +189,7 @@ ppsspp_MAKE = mkdir -p ../glshim && \
 	ln -sf /workspace/h700/cores/h700-deps/lib/libmali.so.0 ../glshim/libGLESv2.so && \
 	ln -sf /workspace/h700/cores/h700-deps/lib/libmali.so.0 ../glshim/libEGL.so && \
 	LIBRARY_PATH=../glshim CXXFLAGS="$(ppsspp_flags)" CFLAGS="$(ppsspp_flags)" \
-	LDFLAGS="-L../glshim -lstdc++fs" \
+	LDFLAGS="-L../glshim -lstdc++fs -Wl,--no-as-needed" \
 	make -f Makefile platform=arm64-gles
 
 ###############################
