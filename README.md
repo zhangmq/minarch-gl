@@ -15,8 +15,8 @@ Stock NextUI's `minarch` implements libretro's *video output* with OpenGL
 supplying `get_proc_address` / `get_current_framebuffer`, and PAKS.md says so
 outright ("does not implement the OpenGL libretro APIs").  As a result, cores
 that render through GLES — flycast (Dreamcast/NAOMI), mupen64plus-next (N64),
-yabasanshiro (Saturn) and swanstation (PlayStation) — cannot run under stock
-minarch, and the community ships them as *standalone* emulators with no NextUI
+yabasanshiro (Saturn), swanstation (PlayStation) and ppsspp (PlayStation Portable)
+— cannot run under stock minarch, and the community ships them as *standalone* emulators with no NextUI
 integration.
 
 minarch-gl adds that missing half: the frontend owns a GLES context, gives the
@@ -26,8 +26,8 @@ options, savestates, resume and shaders while running the cores above.
 
 | | |
 |---|---|
-| Platform | `h700` only (the four core pins were chosen for this SoC) |
-| Status | experimental; installer + frontend exercised on an RGSP (2026-11-20), SwanStation prototype tested on device; other core smoke tests ongoing |
+| Platform | `h700` only (the five core pins were chosen for this SoC) |
+| Status | experimental; installer + frontend exercised on an RGSP (2026-11-20), SwanStation and PPSSPP tested on device (PPSSPP in v0.1.5, GoW CoO 30 fps); other core smoke tests ongoing |
 | Distribution | one small Tools pak (`Tools/h700/MinarchGL Installer.pak`, ~110 KB); the frontend and the cores are downloaded from this project's releases, and the tool can restore stock at any time |
 | Upstream | pinned overlay on [LoveRetro/NextUI](https://github.com/LoveRetro/NextUI) (`main`); base SHA and toolchain digest in `upstream.lock` |
 
@@ -65,7 +65,7 @@ inherited unchanged. Design and working notes are kept outside this repository.
 
 ## Cores
 
-Emulation comes from four libretro cores, each built from a pinned commit
+Emulation comes from five libretro cores, each built from a pinned commit
 (`make cores`) and shipped as its own pak:
 
 | pak | core | source | ref | commit |
@@ -74,6 +74,7 @@ Emulation comes from four libretro cores, each built from a pinned commit
 | `LIBRETRO_MUPEN64PLUS` | mupen64plus_next | [libretro/mupen64plus-libretro-nx](https://github.com/libretro/mupen64plus-libretro-nx) | `master` | `6752836d` |
 | `LIBRETRO_YABASANSHIRO` | yabasanshiro | [zhangmq/yabasanshiro-pirry](https://github.com/zhangmq/yabasanshiro-pirry) | `h700-libretro` | `eb32d3f9` |
 | `LIBRETRO_SWANSTATION` | swanstation | [libretro/swanstation](https://github.com/libretro/swanstation) | `main` | `631f0fb3` |
+| `LIBRETRO_PPSSPP` | ppsspp | [hrydgard/ppsspp](https://github.com/hrydgard/ppsspp) | `master` | `2b5715e` |
 
 The pins are the only version this project tracks: they live in
 `gles-cores/h700/makefile` (the Saturn one is mirrored in `upstream.lock`, which
@@ -96,11 +97,16 @@ Why these sources:
 - **swanstation** — libretro's hard fork of DuckStation. It has a GLES 3.0+
   renderer, an AArch64 JIT, PGXP and a built-in OpenBIOS (so no BIOS image is
   required); our H700 prototype ran 2D and 3D titles at 59.6 fps at 1x.
+- **ppsspp** — upstream hrydgard/ppsspp; its libretro port lives in-tree under
+  `libretro/` and builds with the GLES 2/3 renderer. The gcc 8.3/aarch64 build fixes
+  live in `patches/ppsspp.patch`. The pak ships the pinned, **unmodified master
+  assets** (fonts, flash0, ppge_atlas, lang, compat.ini): GoW's title/menu needs
+  them, and using a different PPSSPP version's assets is unsupported.
 
 `ref` is where the commit is easiest to find, not a branch the build follows:
 the build fetches the pin by SHA, so a pin that is older than the branch tip
 (and flycast's is, by years) builds exactly the pinned commit. Only
-yabasanshiro sets a branch override; the other three clone the default branch
+yabasanshiro sets a branch override; the other four clone the default branch
 and then check out the SHA on top.
 
 ## Build
@@ -110,7 +116,7 @@ Prerequisites: `docker`, `git`, `curl`, `zip` or `bsdtar`, ~2 GB free.
 ```sh
 make build            # frontend only           -> dist/minarch-gl.elf
 make installer        # + the installer tool    -> dist/minarch-gl-installer.elf
-make cores            # + the four cores        -> build/paks/<TAG>.pak/
+make cores            # + the five cores        -> build/paks/<TAG>.pak/
 make release          # everything + packaging  -> all release assets in dist/
 make test             # host-side installer tests (no device needed)
 make check            # upstream drift report (no writes)
@@ -122,7 +128,7 @@ The build:
 2. copies it to `build/tree` and overlays `workspace/`,
 3. builds `workspace/all/minarch-gl` and `installer` inside
    the pinned toolchain image,
-4. optionally builds the four cores and stages one flat pak per core.
+4. optionally builds the five cores and stages one flat pak per core.
 
 `make release` then writes, into `dist/`: `core-list.json`, `SHA256SUMS`,
 `minarch-gl_h700.elf`, `LIBRETRO_<TAG>_h700.pak.tar.gz` (one per core),
@@ -135,7 +141,8 @@ The toolchain is pinned by digest in `upstream.lock`; the frontend elf is
 reproducible from (base sha, overlay commit, toolchain digest).
 
 No vendor blob is needed to build: the Saturn core links against the Mali
-driver only for the `DT_NEEDED` record.  When `.cache/cores/h700-deps` has no
+driver only for the `DT_NEEDED` record, and PPSSPP is linked with unresolved
+GL/EGL symbols that the device's `libmali` resolves at run time.  When `.cache/cores/h700-deps` has no
 `libmali.so.0` (a clean checkout, or CI), `tools/build.sh` generates a stub with
 the same SONAME and `--no-as-needed` keeps the entry; the device's real driver
 resolves the `gl*` symbols at run time.  The same workflow builds a release on
@@ -245,6 +252,7 @@ Roms/Nintendo 64 (LIBRETRO_MUPEN64PLUS)/       Nintendo 64      (mupen64plus-nex
 Roms/Sega Saturn (LIBRETRO_YABASANSHIRO)/      Sega Saturn      (yabasanshiro)
 Roms/Sega Titan Video (LIBRETRO_YABASANSHIRO)/ Sega ST-V        (yabasanshiro, same tag/pak)
 Roms/Sony PlayStation (LIBRETRO_SWANSTATION)/  Sony PlayStation  (swanstation)
+Roms/PlayStation Portable (LIBRETRO_PPSSPP)/  PlayStation Portable (ppsspp)
 ```
 
 BIOS files go under `/Bios/<TAG>/`: that is the directory minarch hands to the
@@ -254,10 +262,23 @@ empty directory together with the core's ROM folders.
 
 Which files a core needs there, and how it expects them laid out inside it, is
 the core's own business -- follow that core's libretro documentation (flycast,
-mupen64plus-next, yabasanshiro and swanstation each document their own BIOS).
+mupen64plus-next, yabasanshiro, swanstation and ppsspp each document their own
+BIOS).
 SwanStation's BIOS is optional: it falls back to the OpenBIOS image built into
 the core. This project deliberately keeps no copy of that list, so it cannot go
 stale.
+
+PPSSPP is the one core with an asset tree rather than a BIOS: it expects the
+upstream `assets/` contents under `Bios/<TAG>/PPSSPP/` (fonts, flash0,
+`ppge_atlas.zim`, `lang/`, `compat.ini`).  The `LIBRETRO_PPSSPP` pak ships the
+pinned, unmodified master assets and its `launch.sh` seeds that directory on
+first run.  Do not mix assets from a different PPSSPP build.  On H700 the pak
+also installs a four-line per-game compat diff at
+`Saves/<TAG>/PSP/SYSTEM/compat.ini` (note the extra `PSP/`; this is PPSSPP's
+`memstick/PSP/SYSTEM`, not `Saves/<TAG>/SYSTEM`) that enables the 30 fps hack
+and disables the 60 fps hack for God of War: Chains of Olympus.  The shipped
+assets stay factory-default; edit that override to change the choice.
+`ppsspp_frame_duplication` defaults off to match standalone PPSSPP.
 
 The tags are not the community ones (`DC`, `SS`, `N64`, `PS`) on purpose: the
 Pak Store already ships stand-alone paks with those names, and two paks cannot
@@ -265,7 +286,11 @@ share a tag. `LIBRETRO_FLYCAST` also covers Dreamcast and Naomi with a single
 pak; `LIBRETRO_SWANSTATION` owns the PS1 folder, so existing
 `Roms/Sony PlayStation (PS)` trees need renaming to
 `Roms/Sony PlayStation (LIBRETRO_SWANSTATION)` (the installer creates the new
-directory when you press CREATE).
+directory when you press CREATE).  `LIBRETRO_PPSSPP` likewise owns
+`Roms/PlayStation Portable (LIBRETRO_PPSSPP)`; the existing standalone
+`Emus/h700/PSP.pak` keeps using `Roms/PlayStation Portable (PSP)`, so testing
+both means copying the ROMs (or renaming the folder and giving the standalone
+its own copy).
 
 ## Upstream sync
 
