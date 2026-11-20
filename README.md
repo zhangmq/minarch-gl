@@ -14,10 +14,10 @@ Stock NextUI's `minarch` implements libretro's *video output* with OpenGL
 `RETRO_ENVIRONMENT_SET_HW_RENDER` is a stub that returns success without
 supplying `get_proc_address` / `get_current_framebuffer`, and PAKS.md says so
 outright ("does not implement the OpenGL libretro APIs").  As a result, cores
-that render through GLES — flycast (Dreamcast/NAOMI), mupen64plus-next (N64),
-yabasanshiro (Saturn), swanstation (PlayStation) and ppsspp (PlayStation Portable)
-— cannot run under stock minarch, and the community ships them as *standalone* emulators with no NextUI
-integration.
+that render through GLES — flycast and flycastrophe (Dreamcast/NAOMI),
+mupen64plus-next (N64), yabasanshiro (Saturn), swanstation (PlayStation) and
+ppsspp (PlayStation Portable) — cannot run under stock minarch, and the
+community ships them as *standalone* emulators with no NextUI integration.
 
 minarch-gl adds that missing half: the frontend owns a GLES context, gives the
 core a framebuffer, presents the core's texture through the same shader chain,
@@ -26,8 +26,8 @@ options, savestates, resume and shaders while running the cores above.
 
 | | |
 |---|---|
-| Platform | `h700` only (the five core pins were chosen for this SoC) |
-| Status | experimental; installer + frontend exercised on an RGSP (2026-11-20), SwanStation and PPSSPP tested on device (PPSSPP in v0.1.5, GoW CoO 30 fps); other core smoke tests ongoing |
+| Platform | `h700` only (the six core pins were chosen for this SoC) |
+| Status | experimental; installer + frontend exercised on an RGSP (2026-11-20), SwanStation and PPSSPP tested on device (PPSSPP in v0.1.5, GoW CoO 30 fps), Flycastrophe in v0.1.6 (Naomi Crazy Taxi 32 → 55 fps); other core smoke tests ongoing |
 | Distribution | one small Tools pak (`Tools/h700/MinarchGL Installer.pak`, ~110 KB); the frontend and the cores are downloaded from this project's releases, and the tool can restore stock at any time |
 | Upstream | pinned overlay on [LoveRetro/NextUI](https://github.com/LoveRetro/NextUI) (`main`); base SHA and toolchain digest in `upstream.lock` |
 
@@ -65,7 +65,7 @@ inherited unchanged. Design and working notes are kept outside this repository.
 
 ## Cores
 
-Emulation comes from five libretro cores, each built from a pinned commit
+Emulation comes from six libretro cores, each built from a pinned commit
 (`make cores`) and shipped as its own pak:
 
 | pak | core | source | ref | commit |
@@ -75,6 +75,7 @@ Emulation comes from five libretro cores, each built from a pinned commit
 | `LIBRETRO_YABASANSHIRO` | yabasanshiro | [zhangmq/yabasanshiro-pirry](https://github.com/zhangmq/yabasanshiro-pirry) | `h700-libretro` | `eb32d3f9` |
 | `LIBRETRO_SWANSTATION` | swanstation | [libretro/swanstation](https://github.com/libretro/swanstation) | `main` | `631f0fb3` |
 | `LIBRETRO_PPSSPP` | ppsspp | [hrydgard/ppsspp](https://github.com/hrydgard/ppsspp) | `master` | `2b5715e` |
+| `LIBRETRO_FLYCASTROPHE` | flycastrophe | [Helaas/Flycastrophe](https://github.com/Helaas/Flycastrophe) | `main` | `1d7ef4e` |
 
 The pins are the only version this project tracks: they live in
 `gles-cores/h700/makefile` (the Saturn one is mirrored in `upstream.lock`, which
@@ -102,12 +103,31 @@ Why these sources:
   live in `patches/ppsspp.patch`. The pak ships the pinned, **unmodified master
   assets** (fonts, flash0, ppge_atlas, lang, compat.ini): GoW's title/menu needs
   them, and using a different PPSSPP version's assets is unsupported.
+- **flycastrophe** — upstream [Helaas/Flycastrophe](https://github.com/Helaas/Flycastrophe),
+  a fork that follows `flyinghead/flycast` master by merge and ports Deadcast's
+  speed work: the AICA on its own thread, a faster SH4 recompiler, one draw per
+  run of one-triangle modifier volumes, `glDrawRangeElements` for indexed draws,
+  a code cache on disk and frame skipping when a game falls behind. It is still
+  in development upstream (GPLv2). gcc 8.3 needs one source patch,
+  `patches/flycastrophe.patch`, plus `-lstdc++fs` at link time.
 
 `ref` is where the commit is easiest to find, not a branch the build follows:
 the build fetches the pin by SHA, so a pin that is older than the branch tip
 (and flycast's is, by years) builds exactly the pinned commit. Only
-yabasanshiro sets a branch override; the other four clone the default branch
+yabasanshiro sets a branch override; the other five clone the default branch
 and then check out the SHA on top.
+
+Flycastrophe is a second Dreamcast/NAOMI core, not a replacement for flycast:
+it is the same emulator with a set of speed changes ported from Deadcast (a
+trimmed Flycast for a handheld), it trades accuracy for speed, and its core
+options default to the fast path. It therefore gets its own pak, its own ROM
+folders (`Roms/Sega Dreamcast (LIBRETRO_FLYCASTROPHE)`,
+`Roms/Sega Naomi (LIBRETRO_FLYCASTROPHE)`) and its own save states; the two can
+be installed side by side and are picked per folder. On the H700 it took Naomi
+Crazy Taxi from 32 to 55 fps, while titles that already held 60 fps were
+unchanged. The pak defaults `HLE BIOS` to on: with a real `dc_boot.bin` this
+core stops on the Dreamcast menu for discs whose CDI boot sector is defective,
+where flycast v2.0 booted them directly; Naomi has no BIOS boot and ignores it.
 
 ## Build
 
@@ -116,7 +136,7 @@ Prerequisites: `docker`, `git`, `curl`, `zip` or `bsdtar`, ~2 GB free.
 ```sh
 make build            # frontend only           -> dist/minarch-gl.elf
 make installer        # + the installer tool    -> dist/minarch-gl-installer.elf
-make cores            # + the five cores        -> build/paks/<TAG>.pak/
+make cores            # + the six cores         -> build/paks/<TAG>.pak/
 make release          # everything + packaging  -> all release assets in dist/
 make test             # host-side installer tests (no device needed)
 make check            # upstream drift report (no writes)
@@ -128,7 +148,7 @@ The build:
 2. copies it to `build/tree` and overlays `workspace/`,
 3. builds `workspace/all/minarch-gl` and `installer` inside
    the pinned toolchain image,
-4. optionally builds the five cores and stages one flat pak per core.
+4. optionally builds the six cores and stages one flat pak per core.
 
 `make release` then writes, into `dist/`: `core-list.json`, `SHA256SUMS`,
 `minarch-gl_h700.elf`, `LIBRETRO_<TAG>_h700.pak.tar.gz` (one per core),
