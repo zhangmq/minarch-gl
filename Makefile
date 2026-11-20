@@ -16,7 +16,7 @@ build:
 installer:
 	BUILD_INSTALLER=1 sh tools/build.sh
 
-# Frontend + installer + the three cores, staged under build/paks/.
+# Frontend + installer + the four cores, staged under build/paks/.
 cores:
 	BUILD_CORES=1 sh tools/build.sh
 

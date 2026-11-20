@@ -40,7 +40,7 @@ jobs:
           . ./upstream.lock
           docker pull "$TOOLCHAIN_IMAGE@$TOOLCHAIN_DIGEST"
 
-      # The first run clones NextUI, the frontend dependencies and the three
+      # The first run clones NextUI, the frontend dependencies and the four
       # core repositories; later runs start from this cache.  Keyed on every pin
       # so a bump rebuilds from scratch.
       - name: Cache sources

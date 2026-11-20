@@ -18,6 +18,7 @@
 CORES= flycast
 CORES+= mupen64plus_next
 CORES+= yabasanshiro
+CORES+= swanstation
 
 ###############################
 
@@ -135,6 +136,26 @@ yaba_libchdr_REPO = https://github.com/devmiyax/libchdr
 yaba_libchdr_HASH = 074ff1614f2a685f2b5a95b0e788bff6297d5680
 yaba_zlib_REPO = https://github.com/madler/zlib
 yaba_zlib_HASH = 50893291621658f355bc5b4d450a8d06a563053d
+
+# swanstation: PlayStation 1, GLES 3.0+ hw-render, GPLv3.
+#
+# The libretro core lives in libretro/swanstation (a hard fork of DuckStation)
+# and embeds OpenBIOS, so it boots without a BIOS image.  AArch64 JIT is
+# supported.  Unlike the other cores it does not link GLES/EGL at all: GLAD
+# resolves every GL entry point through SET_HW_RENDER's get_proc_address, so
+# there is no libmali/GLESv2 shim and no DT_NEEDED on the vendor driver.
+#
+# CPU_ARCH must be forced: Makefile.libretro otherwise detects the build host's
+# uname (x86_64).  Its own Makefile adds -std=gnu++17; the tuning flags are
+# passed as environment variables so the Makefile's += (includes, std) survives.
+swanstation_REPO = https://github.com/libretro/swanstation
+swanstation_HASH = 631f0fb31b809e0f889d7c551fe695788e39c1d3
+swanstation_CORE = swanstation_libretro.so
+swanstation_cflags = -O3 -DNDEBUG -fomit-frame-pointer -fno-strict-aliasing \
+	-march=armv8-a+crc+fp+simd -mcpu=cortex-a53 -mtune=cortex-a53 -D_GNU_SOURCE
+swanstation_MAKE = CXXFLAGS="$(swanstation_cflags)" CFLAGS="$(swanstation_cflags)" \
+	make -f Makefile.libretro platform=unix CPU_ARCH=aarch64
+swanstation_SUBMODULES =
 
 ###############################
 

@@ -4,7 +4,7 @@
 #   tools/build.sh                  # frontend only            -> dist/minarch-gl.elf
 #   BUILD_INSTALLER=1 tools/build.sh # + the installer          -> dist/minarch-gl-installer.elf
 #                                     and build/paks/MinarchGL Installer.pak/
-#   BUILD_CORES=1 tools/build.sh    # + flycast/mupen64plus_next/yabasanshiro
+#   BUILD_CORES=1 tools/build.sh    # + flycast/mupen64plus_next/yabasanshiro/swanstation
 #                                     and build/paks/<TAG>.pak/ for each
 #   BUILD_CORES=flycast ...         # one core only (partial staging; the release
 #                                   # script refuses a partial manifest unless asked)
@@ -28,7 +28,7 @@ DIST="$ROOT/dist"
 PAKS="$ROOT/build/paks"
 CORE_CACHE="$ROOT/.cache/cores"
 DEPS_CACHE="$ROOT/.cache/frontend-deps"
-ALL_CORES="flycast mupen64plus_next yabasanshiro"
+ALL_CORES="flycast mupen64plus_next yabasanshiro swanstation"
 # Per-platform core builds live in gles-cores/<plat>/, mirroring NextUI's
 # workspace/<plat>/ split.  These cores are not upstream ones we maintain, so
 # they are not part of the workspace overlay.  h700 is the only platform today.
