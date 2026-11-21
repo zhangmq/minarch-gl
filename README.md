@@ -27,7 +27,7 @@ options, savestates, resume and shaders while running the cores above.
 | | |
 |---|---|
 | Platform | `h700` only (the six core pins were chosen for this SoC) |
-| Status | experimental; installer + frontend exercised on an RGSP (2026-11-20), SwanStation and PPSSPP tested on device (PPSSPP in v0.1.5, GoW CoO 30 fps), Flycastrophe in v0.1.6 (Naomi Crazy Taxi 32 → 55 fps); other core smoke tests ongoing |
+| Status | experimental; installer + frontend exercised on an RGSP (2026-11-20/21), SwanStation, PPSSPP (v0.1.5, GoW CoO 30 fps) and Flycastrophe (v0.1.6, Naomi Crazy Taxi 32 → 55 fps) tested on device. v0.1.7 moves Flycastrophe to 0.3.0 and yabasanshiro to the Region option / VDP1 draw-end fixes, and adds `Update Core List` to the installer; those two cores are pending device testing |
 | Distribution | one small Tools pak (`Tools/h700/MinarchGL Installer.pak`, ~110 KB); the frontend and the cores are downloaded from this project's releases, and the tool can restore stock at any time |
 | Upstream | pinned overlay on [LoveRetro/NextUI](https://github.com/LoveRetro/NextUI) (`main`); base SHA and toolchain digest in `upstream.lock` |
 
