@@ -49,3 +49,25 @@ core_pin() { # core_pin <core> <commit> <patches-dir>
 core_tags() {
 	sed -n 's/^\(LIBRETRO_[A-Z0-9_]*\)[[:space:]].*/\1/p' "$1" | tr '\n' ' ' | sed 's/ $//'
 }
+
+# A core binary has to be the one *this* toolchain makes: aarch64, and nothing
+# newer than the image's glibc 2.28 sysroot.  Neither is checked anywhere else,
+# and a core built with another compiler links and runs on the builder while
+# failing only on the device -- that is how a gcc 12 flycast once asked for
+# GLIBC_2.36 on a 2.35 system (see .docs/HANDOVER-20261121-FLYCASTROPHE.md).
+# A build rpath is fatal too: it is a build-tree path (DT_RPATH outranks
+# LD_LIBRARY_PATH and ld.so.cache, so a stale stub at that path would shadow the
+# driver), and no core needs one -- yabasanshiro is the only one that ever did,
+# and its recipe now passes -DCMAKE_SKIP_RPATH=ON.
+assert_core_elf() { # assert_core_elf <so> <tag>
+	_so=$1 _tag=$2
+	[ -f "$_so" ] || die "$_tag: no core binary at $_so"
+	file "$_so" | grep -q 'ARM aarch64' || die "$_tag: not an aarch64 ELF: $(file "$_so")"
+	_bad=$(readelf --version-info "$_so" 2>/dev/null |
+		grep -o 'GLIBC_[0-9.]*' | sort -u |
+		awk -F'[_.]' '$2 > 2 || ($2 == 2 && $3 > 28) { printf "%s ", $0 }')
+	[ -z "$_bad" ] || die "$_tag: needs glibc ${_bad}-- the sysroot this project builds against is 2.28"
+	if readelf -d "$_so" | grep -Eq 'RPATH|RUNPATH'; then
+		die "$_tag: the core carries a build rpath: $(readelf -d "$_so" | grep -E 'RPATH|RUNPATH' | sed 's/^ *//')"
+	fi
+}

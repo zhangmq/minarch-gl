@@ -72,6 +72,7 @@ while read -r tag core folders; do
 		continue
 	fi
 	[ -f "$pak/${core}_libretro.so" ] || die "$pak has no ${core}_libretro.so"
+	assert_core_elf "$pak/${core}_libretro.so" "$tag"
 	[ -f "$pak/version" ] || die "$pak has no version file"
 	asset="${tag}_${PLAT}.pak.tar.gz"
 	rm -f "$DIST/$asset"

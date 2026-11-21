@@ -94,6 +94,14 @@ yabasanshiro_CORE = build-h700/yabasanshiro_libretro.so
 # gcc 13) and run it into the staged dependency tree.  GCC_VERSION=8 matches the
 # image's 8.3: the engine picks <experimental/filesystem> below gcc 9, and
 # -lstdc++fs is what resolves those symbols.
+# -DCMAKE_SKIP_RPATH=ON: the core links libmali/libEGL by absolute path from
+# H700_DEPS, and CMake's default build rpath writes that build directory into
+# the .so (DT_RPATH, which outranks LD_LIBRARY_PATH and ld.so.cache).  The
+# device does not have it, so it is dead weight there -- and a stale SONAME stub
+# at that path would shadow the real driver.  Verified 2026-11-22: with the flag
+# the generated link line carries no -rpath; tools/release.sh now rejects a core
+# that ships one.
+#
 # yabasanshiro's tuning: the toolchain's MGL_TUNE, spelled out per core so one
 # flag can be flipped for an A/B without touching the other cores.
 #
@@ -123,6 +131,7 @@ yabasanshiro_MAKE = rm -rf deps build-h700 && \
 		-DH700_DEPS=/workspace/h700/cores/h700-deps \
 		-DCMAKE_CXX_STANDARD=17 -DCMAKE_CXX_STANDARD_REQUIRED=ON \
 		-DCMAKE_CXX_STANDARD_LIBRARIES=-lstdc++fs \
+		-DCMAKE_SKIP_RPATH=ON \
 		-DCMAKE_SHARED_LINKER_FLAGS="-Wl,--no-as-needed" \
 		-DCMAKE_C_FLAGS="$(yaba_flags)" -DCMAKE_CXX_FLAGS="$(yaba_flags)" && \
 	cmake --build build-h700 --parallel 4 --target yabasanshiro_libretro #
