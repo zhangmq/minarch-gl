@@ -17,13 +17,13 @@ Bundled cores (GPLv2/GPLv3, shipped as separate .so files inside each pak)
   mupen64plus-next   https://github.com/libretro/mupen64plus-libretro-nx
                      @ 6752836de8b224febfd5708444755b77712ac939
   yabasanshiro       https://github.com/zhangmq/yabasanshiro-pirry
-                     @ eb32d3f9667ca1e00afcf633881c9484624b8f6f (branch h700-libretro)
+                     @ 3b5b3ce5e99d54854abd18fcb9acd58cbbedbccf (branch h700-libretro)
   swanstation        https://github.com/libretro/swanstation
                      @ 631f0fb31b809e0f889d7c551fe695788e39c1d3 (GPLv3)
   ppsspp             https://github.com/hrydgard/ppsspp
                      @ 2b5715ece170ee4154dba3360807204a0c4b6bdd (GPLv2)
   flycastrophe       https://github.com/Helaas/Flycastrophe
-                     @ 1d7ef4ed8640230a728dee0517a6088e2ff470fa (GPLv2,
+                     @ 8981ec53c6bc3bef47f75826a69299aaf762520f (GPLv2,
                      Flycast plus Deadcast's speed changes)
   Each pak ships the full licence text of its core next to it as
   LICENSE-<core>; the pins above are the sources those binaries were built

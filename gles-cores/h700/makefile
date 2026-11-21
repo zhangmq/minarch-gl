@@ -86,7 +86,7 @@ mupen64plus_next_SUBMODULES =
 # (see .docs/FEEDBACK-YABA-BUILD-20261118.md).
 yabasanshiro_REPO = https://github.com/zhangmq/yabasanshiro-pirry
 yabasanshiro_BRANCH = h700-libretro
-yabasanshiro_HASH = eb32d3f9667ca1e00afcf633881c9484624b8f6f
+yabasanshiro_HASH = 3b5b3ce5e99d54854abd18fcb9acd58cbbedbccf
 yabasanshiro_BUILD_PATH = yabasanshiro
 yabasanshiro_CORE = build-h700/yabasanshiro_libretro.so
 # musashi's generated m68k sources (m68kops.c / m68kop*.c) are a pure function
@@ -214,7 +214,7 @@ ppsspp_MAKE = mkdir -p ../glshim && \
 # through the register unions; the patch takes the address of the plain
 # register word instead, which is the same address.
 flycastrophe_REPO = https://github.com/Helaas/Flycastrophe
-flycastrophe_HASH = 1d7ef4ed8640230a728dee0517a6088e2ff470fa
+flycastrophe_HASH = 8981ec53c6bc3bef47f75826a69299aaf762520f
 # Exactly the four submodules a GLES libretro build reads (their CI's list).
 # The template updates non-recursively, so MAKE re-runs tinygettext recursively
 # for its external/tinycmmc; libchdr's deps/{zlib,zstd,lzma} are plain
