@@ -177,10 +177,12 @@ nothing by itself.
 unzip MinarchGL.Installer.pak.zip into Tools/h700/   # -> Tools/h700/MinarchGL Installer.pak/
 ```
 
-Open **Tools → MinarchGL Installer**. With online updates on (the default) the
-tool fetches this project's latest manifest and checksums at startup (two small
-requests, ~5 s cap); with them off it reads only what is already on the card.
-Either way:
+Open **Tools → MinarchGL Installer**. The first screen is drawn from what is
+already on the card: the startup never touches the network. With online updates
+on (the default) every action that needs this project's release — setup, update,
+a core install, or `Y UPDATE CORE LIST` — fetches the latest manifest and
+checksums first (two small requests, ~5 s cap each) and works from that copy;
+with them off only what is already on the card is used. Either way:
 
 - **Setup User Data** (`Y SETUP`): downloads `minarch-gl_h700.elf`, verifies its
   sha256 against the release's `SHA256SUMS`, saves a copy of the stock frontend,
@@ -191,8 +193,12 @@ Either way:
   row opens its page, where `Y INSTALL` / `Y UPDATE` / `Y UNINSTALL` manage that
   core pak, and its ROM and BIOS folders are listed one by one: `Y CREATE` makes
   the ones that are missing, `Y DELETE` removes one after a confirmation (the
-  files inside it are lost). `A STATUS` shows the frontend state, the data
-  directory, the hashes of the installed and stock copies, and each core's
+  files inside it are lost). `Y UPDATE CORE LIST` refetches the release manifest
+  and reports what it holds — the number of cores, any tag the previous list did
+  not have, and how many installed cores that list can update — without
+  installing anything; it is the only way to see a core that a release added,
+  since nothing is fetched at startup. `A STATUS` shows the frontend state, the
+  data directory, the hashes of the installed and stock copies, and each core's
   installed and available pin. `Y CLEAN USER DATA` removes MinarchGL's own files
   (frontend copies, the stock backup, the cache and downloads; stock is restored
   first when our build is running) and stops on a page only `B` leaves. It
@@ -208,6 +214,7 @@ What the actions touch (nothing else is ever written):
 |---|---|---|
 | `Setup User Data` / `Update MinarchGL` | `.userdata/<plat>/minarch-gl/minarch-gl.elf`, `minarch-stock.elf` (first setup), `core-list.json`, `SHA256SUMS`, `dl/`; the active frontend too when MinarchGL is enabled | `Emus/`, `Roms/`, `Saves/`, `Bios/` |
 | `Enable` / `Disable MinarchGL` | `.system/<plat>/bin/minarch.elf` | everything else |
+| `Update Core List` | `.userdata/<plat>/minarch-gl/core-list.json`, `SHA256SUMS`, `dl/` | `Emus/`, `Roms/`, `Saves/`, `Bios/` |
 | core `Install` / `Update` / `Uninstall` | `Emus/<plat>/<TAG>.pak/` (only that tag) | ROM folders, BIOS, other paks |
 | `Create` / `Delete` folders on a core page | `Roms/<name> (<TAG>)/` and `Bios/<TAG>/` | ROM files elsewhere |
 | `Clean User Data` | restores the stock frontend, then removes `.userdata/<plat>/minarch-gl/` (keeping `prefs`) | `Emus/` core paks, `Roms/`, `Saves/`, `Bios/`, the installer pak |
@@ -228,8 +235,9 @@ frontend has -- an `Uninstall MINARCHGL` drops you back there).
 **Online updates** — `Y` toggles it (the row flips between *Disable* and
 *Enable*). The choice is kept in `.userdata/<plat>/minarch-gl/prefs`, survives
 reinstalls of the pak, and defaults to on. With it off the tool never opens a
-network connection: the startup check reads the local copies, and `Install` /
-`Update` rows that would need a download are not shown at all. The setup page
+network connection: every action reads only the local copies, `Update Core List`
+is not offered, and `Install` / `Update` rows that would need a download are not
+shown at all. The setup page
 says `Online updates are off; enable them to set up.` and, below it,
 `No network? Apply MinarchGL.Full_<plat>.pakz.`. `file://` URLs still work --
 that is how the Full Pack below installs itself. Uninstalling the frontend keeps

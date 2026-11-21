@@ -6,7 +6,8 @@
 // and what the latest release offers:
 //
 //   install page  nothing installed yet, or the card needs a repair
-//   main page     installed: enable/disable, update, cores, status, uninstall
+//   main page     installed: enable/disable, update, cores, refresh the core
+//                 list, status, uninstall
 //   cores page    one row per core in the release list
 //   status page   what the card has: the frontend and the stock copy
 //   core page     install/update/uninstall one core, and its ROM folders
@@ -34,6 +35,7 @@
 //                             (install|main|cores|status|core|done|message)
 //                             for screenshots and layout checks on the device
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <functional>
@@ -596,6 +598,61 @@ static void doToggleOnline(App &a) {
 	showResult(a, on ? "Online updates enabled." : "Online updates disabled.", a.screen);
 }
 
+// The release list is read from the card at startup and no longer fetched
+// there, so it is only as fresh as the last button press.  A release can add a
+// core -- or move a pin -- long after the user last installed anything, and
+// until somebody fetches the manifest again the cores page cannot show it.
+// This is that fetch, made explicit: it installs nothing, it only refreshes the
+// list and says whether the release was reachable at all.
+static void doUpdateCoreList(App &a) {
+	std::vector<std::string> before;
+	for (const mgl::CoreEntry &e : a.manifest.list.cores) before.push_back(e.tag);
+
+	a.busy = true;
+	a.busyText = "Updating core list...";
+	render(a);
+	a.manifest = mgl::loadManifest(a.paths, a.env, true, progressOf(a));
+	a.busy = false;
+	a.frontend = mgl::frontendInfo(a.paths, a.manifest.latestGl);
+	if (!a.manifest.ok) {
+		showFailure(a, a.manifest.err.empty() ? "No release information." : a.manifest.err);
+		return;
+	}
+
+	const size_t count = a.manifest.list.cores.size();
+	std::string text;
+	if (a.manifest.source != mgl::ManifestSource::Online) {
+		// The fetch failed and a local copy answered instead: saying "updated"
+		// here would be the one thing this row must never do.
+		text = "Could not reach the release.\nUsing the local copy: " +
+			std::to_string(count) + " cores.";
+	} else {
+		std::string added;
+		for (const mgl::CoreEntry &e : a.manifest.list.cores) {
+			if (std::find(before.begin(), before.end(), e.tag) == before.end()) {
+				if (!added.empty()) added += ", ";
+				added += e.tag;
+			}
+		}
+		text = added.empty() ? "Core list is up to date: " : "Core list updated: ";
+		text += std::to_string(count) + " cores";
+		if (!added.empty()) text += " (+" + added + ")";
+		text += ".";
+	}
+
+	// What the new list means for the card: the cores page is where they get
+	// installed, but the main page is where the user finds that out.
+	int updates = 0;
+	for (const mgl::CoreEntry &e : a.manifest.list.cores) {
+		if (mgl::coreStatus(a.paths, e).state == mgl::CoreState::NotLatest) updates++;
+	}
+	if (updates > 0) {
+		text += "\n" + std::to_string(updates) +
+			(updates == 1 ? " core can be updated." : " cores can be updated.");
+	}
+	showResult(a, text, Screen::Main);
+}
+
 static void doUninstallFrontend(App &a) {
 	a.busy = true;
 	a.busyText = "Working...";
@@ -795,6 +852,18 @@ static void buildMainRows(App &a) {
 	cores.openHint = "OPEN";
 	cores.open = [&a]() { go(a, Screen::Cores); };
 	a.rows.push_back(cores);
+
+	// Next to the page it feeds: the cores page shows what the list in hand
+	// says, and this is the only way to ask for a newer one without installing
+	// (or reinstalling) something first.  Offline the local copy is all there
+	// is, so the row would only ever read that file back.
+	if (a.env.online) {
+		Row refresh;
+		refresh.label = "Update Core List";
+		refresh.actionHint = "UPDATE";
+		refresh.action = [&a]() { doUpdateCoreList(a); };
+		a.rows.push_back(refresh);
+	}
 
 	Row status;
 	status.label = "Status";
