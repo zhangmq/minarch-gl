@@ -27,7 +27,7 @@ options, savestates, resume and shaders while running the cores above.
 | | |
 |---|---|
 | Platform | `h700` only (the six core pins were chosen for this SoC) |
-| Status | experimental; installer + frontend exercised on an RGSP (2026-11-20/21), SwanStation, PPSSPP (v0.1.5, GoW CoO 30 fps) and Flycastrophe (v0.1.6, Naomi Crazy Taxi 32 → 55 fps) tested on device. v0.1.7 moves Flycastrophe to 0.3.0 and yabasanshiro to the Region option / VDP1 draw-end fixes, and adds `Update Core List` to the installer; those two cores are pending device testing |
+| Status | experimental; installer + frontend exercised on an RGSP (2026-11-20/22), SwanStation, PPSSPP (v0.1.5, GoW CoO 30 fps) and Flycastrophe (v0.1.6, Naomi Crazy Taxi 32 → 55 fps) tested on device. v0.1.7 moved Flycastrophe to 0.3.0 and yabasanshiro to the Region / VDP1 draw-end fixes and added `Update Core List`; v0.1.8 adds `Update Installer` (the tool replaces itself inside its pak, no reboot) and drops the store pak — the `.pakz` is now the only installer package |
 | Distribution | one small Tools pak (`Tools/h700/MinarchGL Installer.pak`, ~110 KB); the frontend and the cores are downloaded from this project's releases, and the tool can restore stock at any time |
 | Upstream | pinned overlay on [LoveRetro/NextUI](https://github.com/LoveRetro/NextUI) (`main`); base SHA and toolchain digest in `upstream.lock` |
 
@@ -72,7 +72,7 @@ Emulation comes from six libretro cores, each built from a pinned commit
 |---|---|---|---|---|
 | `LIBRETRO_FLYCAST` | flycast | [flyinghead/flycast](https://github.com/flyinghead/flycast) | tag `v2.0` | `aa97a6d6` |
 | `LIBRETRO_MUPEN64PLUS` | mupen64plus_next | [libretro/mupen64plus-libretro-nx](https://github.com/libretro/mupen64plus-libretro-nx) | `master` | `6752836d` |
-| `LIBRETRO_YABASANSHIRO` | yabasanshiro | [zhangmq/yabasanshiro-pirry](https://github.com/zhangmq/yabasanshiro-pirry) | `h700-libretro` | `3b5b3ce5` |
+| `LIBRETRO_YABASANSHIRO` | yabasanshiro | [zhangmq/yabasanshiro-pirry](https://github.com/zhangmq/yabasanshiro-pirry) | `h700-libretro` | `dd35b85e` |
 | `LIBRETRO_SWANSTATION` | swanstation | [libretro/swanstation](https://github.com/libretro/swanstation) | `main` | `631f0fb3` |
 | `LIBRETRO_PPSSPP` | ppsspp | [hrydgard/ppsspp](https://github.com/hrydgard/ppsspp) | `master` | `2b5715e` |
 | `LIBRETRO_FLYCASTROPHE` | flycastrophe | [Helaas/Flycastrophe](https://github.com/Helaas/Flycastrophe) | `main` | `8981ec5` |

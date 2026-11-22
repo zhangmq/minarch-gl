@@ -17,7 +17,7 @@ Bundled cores (GPLv2/GPLv3, shipped as separate .so files inside each pak)
   mupen64plus-next   https://github.com/libretro/mupen64plus-libretro-nx
                      @ 6752836de8b224febfd5708444755b77712ac939
   yabasanshiro       https://github.com/zhangmq/yabasanshiro-pirry
-                     @ 3b5b3ce5e99d54854abd18fcb9acd58cbbedbccf (branch h700-libretro)
+                     @ dd35b85edf735d6b887f0630dbfae6d24835a8c6 (branch h700-libretro)
   swanstation        https://github.com/libretro/swanstation
                      @ 631f0fb31b809e0f889d7c551fe695788e39c1d3 (GPLv3)
   ppsspp             https://github.com/hrydgard/ppsspp

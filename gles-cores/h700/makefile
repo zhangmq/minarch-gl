@@ -86,7 +86,7 @@ mupen64plus_next_SUBMODULES =
 # (see .docs/FEEDBACK-YABA-BUILD-20261118.md).
 yabasanshiro_REPO = https://github.com/zhangmq/yabasanshiro-pirry
 yabasanshiro_BRANCH = h700-libretro
-yabasanshiro_HASH = 3b5b3ce5e99d54854abd18fcb9acd58cbbedbccf
+yabasanshiro_HASH = dd35b85edf735d6b887f0630dbfae6d24835a8c6
 yabasanshiro_BUILD_PATH = yabasanshiro
 yabasanshiro_CORE = build-h700/yabasanshiro_libretro.so
 # musashi's generated m68k sources (m68kops.c / m68kop*.c) are a pure function
