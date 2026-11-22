@@ -15,13 +15,13 @@ Bundled cores (GPLv2/GPLv3, shipped as separate .so files inside each pak)
   flycast            https://github.com/flyinghead/flycast
                      @ aa97a6d64fb47d3ce0febaa575b26d975dd916e4 (v2.0)
   mupen64plus-next   https://github.com/libretro/mupen64plus-libretro-nx
-                     @ 6752836de8b224febfd5708444755b77712ac939
+                     @ 15bada85906593376e8fd697f1b0b3af3a20f512
   yabasanshiro       https://github.com/zhangmq/yabasanshiro-pirry
-                     @ dd35b85edf735d6b887f0630dbfae6d24835a8c6 (branch h700-libretro)
+                     @ f86b66ea4da77b1c891c71e1b99433227d7abeca (branch h700-libretro)
   swanstation        https://github.com/libretro/swanstation
                      @ 631f0fb31b809e0f889d7c551fe695788e39c1d3 (GPLv3)
   ppsspp             https://github.com/hrydgard/ppsspp
-                     @ 2b5715ece170ee4154dba3360807204a0c4b6bdd (GPLv2)
+                     @ a2f0b60d4576ecc20773f7b1894ac9612fe37aa6 (GPLv2)
   flycastrophe       https://github.com/Helaas/Flycastrophe
                      @ 8981ec53c6bc3bef47f75826a69299aaf762520f (GPLv2,
                      Flycast plus Deadcast's speed changes)

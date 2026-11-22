@@ -27,7 +27,7 @@ options, savestates, resume and shaders while running the cores above.
 | | |
 |---|---|
 | Platform | `h700` only (the six core pins were chosen for this SoC) |
-| Status | experimental; installer + frontend exercised on an RGSP (2026-11-20/22), SwanStation, PPSSPP (v0.1.5, GoW CoO 30 fps) and Flycastrophe (v0.1.6, Naomi Crazy Taxi 32 → 55 fps) tested on device. v0.1.7 moved Flycastrophe to 0.3.0 and yabasanshiro to the Region / VDP1 draw-end fixes and added `Update Core List`; v0.1.8 adds `Update Installer` (the tool replaces itself inside its pak, no reboot) and drops the store pak — the `.pakz` is now the only installer package |
+| Status | experimental; installer + frontend exercised on an RGSP (2026-11-20/22), SwanStation, PPSSPP (v0.1.5, GoW CoO 30 fps) and Flycastrophe (v0.1.6, Naomi Crazy Taxi 32 → 55 fps) tested on device. v0.1.7 added `Update Core List` and moved Flycastrophe to 0.3.0; v0.1.8 added `Update Installer` (the tool replaces itself inside its pak, no reboot) and dropped the store pak — the `.pakz` is the only installer package; v0.1.9 moves yabasanshiro (SH2 DMA into VDP2 RAM cost), ppsspp (+77 commits) and mupen64plus-next (3.0 rebase) forward and re-derives its patch |
 | Distribution | one small Tools pak (`Tools/h700/MinarchGL Installer.pak`, ~110 KB); the frontend and the cores are downloaded from this project's releases, and the tool can restore stock at any time |
 | Upstream | pinned overlay on [LoveRetro/NextUI](https://github.com/LoveRetro/NextUI) (`main`); base SHA and toolchain digest in `upstream.lock` |
 
@@ -71,10 +71,10 @@ Emulation comes from six libretro cores, each built from a pinned commit
 | pak | core | source | ref | commit |
 |---|---|---|---|---|
 | `LIBRETRO_FLYCAST` | flycast | [flyinghead/flycast](https://github.com/flyinghead/flycast) | tag `v2.0` | `aa97a6d6` |
-| `LIBRETRO_MUPEN64PLUS` | mupen64plus_next | [libretro/mupen64plus-libretro-nx](https://github.com/libretro/mupen64plus-libretro-nx) | `master` | `6752836d` |
-| `LIBRETRO_YABASANSHIRO` | yabasanshiro | [zhangmq/yabasanshiro-pirry](https://github.com/zhangmq/yabasanshiro-pirry) | `h700-libretro` | `dd35b85e` |
+| `LIBRETRO_MUPEN64PLUS` | mupen64plus_next | [libretro/mupen64plus-libretro-nx](https://github.com/libretro/mupen64plus-libretro-nx) | `master` | `15bada85` |
+| `LIBRETRO_YABASANSHIRO` | yabasanshiro | [zhangmq/yabasanshiro-pirry](https://github.com/zhangmq/yabasanshiro-pirry) | `h700-libretro` | `f86b66ea` |
 | `LIBRETRO_SWANSTATION` | swanstation | [libretro/swanstation](https://github.com/libretro/swanstation) | `main` | `631f0fb3` |
-| `LIBRETRO_PPSSPP` | ppsspp | [hrydgard/ppsspp](https://github.com/hrydgard/ppsspp) | `master` | `2b5715e` |
+| `LIBRETRO_PPSSPP` | ppsspp | [hrydgard/ppsspp](https://github.com/hrydgard/ppsspp) | `master` | `a2f0b60d` |
 | `LIBRETRO_FLYCASTROPHE` | flycastrophe | [Helaas/Flycastrophe](https://github.com/Helaas/Flycastrophe) | `main` | `8981ec5` |
 
 The pins are the only version this project tracks: they live in

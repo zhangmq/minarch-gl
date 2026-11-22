@@ -55,7 +55,7 @@ flycast_MAKE = git submodule update --init --recursive core/deps/libchdr && \
 # selects the GLES3 renderer (GL_LIB := -lGLESv2), i.e. the same libretro
 # hw-render path minarch-gl drives for flycast.
 mupen64plus_next_REPO = https://github.com/libretro/mupen64plus-libretro-nx
-mupen64plus_next_HASH = 6752836de8b224febfd5708444755b77712ac939
+mupen64plus_next_HASH = 15bada85906593376e8fd697f1b0b3af3a20f512
 # FRESH-CLONE CAVEAT: upstream's develop tree carries gitlinks
 # (mupen64plus-rsp-paraLLEl, ...-video-paraLLEl) but ships no .gitmodules, so the
 # template's `git submodule update --init --recursive` aborts with "No url found for
@@ -86,7 +86,7 @@ mupen64plus_next_SUBMODULES =
 # (see .docs/FEEDBACK-YABA-BUILD-20261118.md).
 yabasanshiro_REPO = https://github.com/zhangmq/yabasanshiro-pirry
 yabasanshiro_BRANCH = h700-libretro
-yabasanshiro_HASH = dd35b85edf735d6b887f0630dbfae6d24835a8c6
+yabasanshiro_HASH = f86b66ea4da77b1c891c71e1b99433227d7abeca
 yabasanshiro_BUILD_PATH = yabasanshiro
 yabasanshiro_CORE = build-h700/yabasanshiro_libretro.so
 # musashi's generated m68k sources (m68kops.c / m68kop*.c) are a pure function
@@ -185,7 +185,7 @@ swanstation_SUBMODULES =
 # provides the symbols (DT_NEEDED is libmali.so.0).  -lstdc++fs is for the
 # armips <filesystem> use under gcc 8.
 ppsspp_REPO = https://github.com/hrydgard/ppsspp
-ppsspp_HASH = 2b5715ece170ee4154dba3360807204a0c4b6bdd
+ppsspp_HASH = a2f0b60d4576ecc20773f7b1894ac9612fe37aa6
 ppsspp_BUILD_PATH = ppsspp/libretro
 ppsspp_CORE = ppsspp_libretro.so
 # Only the submodules the libretro build actually reads.  A blank value would

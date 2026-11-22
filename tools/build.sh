@@ -297,6 +297,12 @@ preclone() {
 	elif [ -n "$sub" ]; then
 		git -C "$d" submodule update --init --recursive $sub
 	fi
+	# Build outputs from an earlier run must not reach the tree: the core
+	# makefiles do not track header dependencies, so a stale .o compiled against
+	# an older header survives a header change and is linked as-is.  That is how
+	# the 2026-11-23 ppsspp build shipped a caller of PoisonMemory(int) next to a
+	# definition of PoisonMemory(int,int) and died with an undefined symbol.
+	git -C "$d" clean -xdfq
 	mkdir -p "$TREE/workspace/$CORES_PLATFORM/cores/src"
 	rm -rf "$TREE/workspace/$CORES_PLATFORM/cores/src/$core"
 	cp -a "$d" "$TREE/workspace/$CORES_PLATFORM/cores/src/$core"

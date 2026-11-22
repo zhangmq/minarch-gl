@@ -1,8 +1,10 @@
+diff --git a/libretro/libretro.c b/libretro/libretro.c
+index 4a9f129..4804aef 100644
 --- a/libretro/libretro.c
 +++ b/libretro/libretro.c
-@@ -654,7 +654,11 @@
+@@ -656,7 +656,11 @@ void retro_get_system_info(struct retro_system_info *info)
      info->library_name = "Mupen64Plus-Next";
-     info->library_version = "2.8" FLAVOUR_VERSION GIT_VERSION;
+     info->library_version = "3.0" FLAVOUR_VERSION GIT_VERSION;
      info->valid_extensions = "n64|v64|z64|bin|u1";
 -    info->need_fullpath = false;
 +    /* minarch-gl (h700): the front end hands over the path and the core reads
@@ -13,7 +15,7 @@
      info->block_extract = false;
  }
  
-@@ -1980,9 +1984,44 @@
+@@ -1982,9 +1986,44 @@ bool retro_load_game(const struct retro_game_info *game)
      }
  #endif
  
