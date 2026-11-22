@@ -7,7 +7,7 @@
 #
 #   minarch-gl_<plat>.elf                the frontend, one per platform
 #   LIBRETRO_<TAG>_<plat>.pak.tar.gz     one core pak per tag
-#   MinarchGL.Installer.pak.zip          the installer (lite: no payload)
+#   (there is no store zip: the tool is not listed in the Pak Store)
 #   MinarchGL.Installer.pakz             the same pak, as a boot-time system update
 #   MinarchGL.Full_<plat>.pakz           installer + frontend + cores for one boot
 #   MinarchGL.Uninstall.pakz             full removal, run by the boot installer
@@ -146,8 +146,10 @@ else
 fi
 
 # --- installer pak and the uninstall pakz -----------------------------------
-zipdir "$DIST/MinarchGL.Installer.pak.zip" "$PAKS/MinarchGL Installer.pak"
-echo "pak: dist/MinarchGL.Installer.pak.zip" >&2
+# No store zip any more: the tool is not going to the Pak Store (a tool pak that
+# rewrites .system/bin is not something the store accepts), and the way the
+# installer updates itself is the .pakz below -- the same file the boot installer
+# applies.  One artifact, one name, nothing for a user to pick by mistake.
 
 # The uninstall script needs the tag list, and the only slice of this project
 # that knows it is cores.list.  It is baked in at release time: the script runs
@@ -240,7 +242,7 @@ sums="$DIST/SHA256SUMS"
 : > "$sums"
 for asset in "minarch-gl_$PLAT.elf" \
              $(sed -n 's/^\(LIBRETRO_[A-Z0-9_]*\).*/\1/p' "$CORES_LIST" | sed "s|$|_$PLAT.pak.tar.gz|") \
-             MinarchGL.Installer.pak.zip MinarchGL.Installer.pakz \
+             MinarchGL.Installer.pakz \
              "MinarchGL.Full_$PLAT.pakz" MinarchGL.Uninstall.pakz core-list.json; do
 	[ -f "$DIST/$asset" ] || die "missing dist/$asset"
 	printf '%s  %s\n' "$(sha256 "$DIST/$asset")" "$asset" >> "$sums"

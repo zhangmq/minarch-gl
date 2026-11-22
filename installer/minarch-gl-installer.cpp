@@ -62,10 +62,24 @@ extern "C" {
 ///////////////////////////////////////////////////////////////////////////////
 // paths
 
+// The pak directory this binary was started from.  Resolved instead of assumed
+// so a renamed pak still updates itself (and so the tests, which set it
+// explicitly, never touch /proc).
+static std::string selfPakDir() {
+	char buf[4096];
+	const ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
+	if (n <= 0) return std::string();
+	buf[n] = '\0';
+	std::string path = buf;
+	const size_t slash = path.rfind('/');
+	return slash == std::string::npos ? std::string() : path.substr(0, slash);
+}
+
 static mgl::Paths makePaths() {
 	mgl::Paths p;
 	p.sdcard = SDCARD_PATH;
 	p.platform = PLATFORM;
+	p.selfPakDir = selfPakDir();
 	return p;
 }
 
@@ -112,7 +126,7 @@ static int cliCoreInstall(const mgl::Paths &p, const mgl::Env &env, const std::s
 static bool isCliOption(const char *arg) {
 	static const char *const known[] = {
 		"--status", "--fetch", "--install", "--enable", "--disable", "--uninstall",
-		"--core-install", "--core-remove", "--post-update",
+		"--core-install", "--core-remove", "--post-update", "--update-installer",
 	};
 	for (const char *k : known)
 		if (!strcmp(arg, k)) return true;
@@ -153,6 +167,18 @@ static int cli(const mgl::Paths &p, const mgl::Env &env, int argc, char *argv[])
 		return 0;
 	}
 	if (what == "--post-update") return cliInstall(p, env);
+	if (what == "--update-installer") {
+		const mgl::Manifest m = mgl::loadManifest(p, env, true);
+		if (!m.ok) { fprintf(stderr, "%s\n", m.err.c_str()); return 1; }
+		const mgl::InstallerUpdate u = mgl::updateInstaller(p, env, m.sums, mgl::Progress());
+		if (!u.ok) { fprintf(stderr, "%s\n", u.err.c_str()); return 1; }
+		if (!u.changed) {
+			printf("installer: %s is current\n", u.from.empty() ? "unknown" : u.from.c_str());
+			return 0;
+		}
+		printf("installer: %s -> %s (applies on the next launch)\n", u.from.c_str(), u.to.c_str());
+		return 0;
+	}
 	if (what == "--core-install" && argc > 2) return cliCoreInstall(p, env, argv[2]);
 	if (what == "--core-remove" && argc > 2) {
 		const mgl::Result r = mgl::removeCore(p, argv[2]);
@@ -653,6 +679,26 @@ static void doUpdateCoreList(App &a) {
 	showResult(a, text, Screen::Main);
 }
 
+// Replace the tool's own files inside its pak.  installer-core explains why the
+// pak directory itself never moves; here it only matters that nothing else is
+// touched and that the new version starts on the next launch, because the
+// running image is still the old one.
+static void doUpdateInstaller(App &a) {
+	if (!refreshManifest(a, "Checking for updates...")) return;
+	a.busy = true;
+	a.busyText = "Updating the installer...";
+	render(a);
+	const mgl::InstallerUpdate u = mgl::updateInstaller(a.paths, a.env, a.manifest.sums, progressOf(a));
+	a.busy = false;
+	if (!u.ok) { showFailure(a, u.err); return; }
+	if (!u.changed) {
+		showResult(a, "Installer is up to date (" +
+			(u.from.empty() ? std::string("unknown") : u.from) + ").", Screen::Main);
+		return;
+	}
+	showResult(a, "Installer updated to " + u.to + ".\nReopen the tool to use it.", Screen::Main);
+}
+
 static void doUninstallFrontend(App &a) {
 	a.busy = true;
 	a.busyText = "Working...";
@@ -863,6 +909,16 @@ static void buildMainRows(App &a) {
 		refresh.actionHint = "UPDATE";
 		refresh.action = [&a]() { doUpdateCoreList(a); };
 		a.rows.push_back(refresh);
+
+		// The tool ships itself as the release's .pakz, so updating it is the same
+		// download the boot installer would apply -- but in place, without a
+		// reboot, because the pak directory has to stay where the launch loop
+		// left its working directory.
+		Row self;
+		self.label = "Update Installer";
+		self.actionHint = "UPDATE";
+		self.action = [&a]() { doUpdateInstaller(a); };
+		a.rows.push_back(self);
 	}
 
 	Row status;
@@ -1210,6 +1266,9 @@ int main(int argc, char *argv[]) {
 
 	App app;
 	app.paths = makePaths();
+	// A failed self-update leaves its unpacked tree inside the pak; the next
+	// start is the one place that can remove it safely.
+	mgl::cleanupInstallerStaging(app.paths);
 	app.env = mgl::defaultEnv(mgl::onlineUpdatesEnabled(app.paths));
 
 	// No UI: run one action and leave.  Everything below the UI entry point is

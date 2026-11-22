@@ -144,9 +144,8 @@ cp -f "$TREE/workspace/installer/build/h700/minarch-gl-installer.elf" "$DIST/min
 echo "installer: $DIST/minarch-gl-installer.elf ($(md5sum "$DIST/minarch-gl-installer.elf" | cut -d' ' -f1))" >&2
 
 # The lite installer pak: the tool and nothing else.  Everything it installs
-# comes from a release, so this is what the store (or a side-load) needs -- and
-# the only thing that has to be re-published when a core or the frontend
-# changes.
+# comes from a release, so this directory (and the .pakz built from it) is the
+# only thing that has to be re-published when a core or the frontend changes.
 say "staging the MinarchGL Installer pak"
 installer_pak="$PAKS/MinarchGL Installer.pak"
 rm -rf "$installer_pak"

@@ -75,6 +75,11 @@ static const int kSchema = 1;
 static const char *kCoreListName = "core-list.json";
 static const char *kSumsName = "SHA256SUMS";
 
+// The tool's own update payload.  It is the same .pakz the boot installer
+// applies, so the release carries one copy of the installer pak and there is no
+// second, user-facing download that could be mistaken for it.
+static const char *kInstallerPakzName = "MinarchGL.Installer.pakz";
+
 ///////////////////////////////////////////////////////////////////////////////
 // paths
 
@@ -96,6 +101,10 @@ struct Paths {
 	std::string logsDir() const { return userDataDir() + "/logs"; }
 	// One key per line; see onlineUpdatesEnabled()/setOnlineUpdates().
 	std::string prefsPath() const { return stateDir() + "/prefs"; }
+	// The directory this binary runs from (Tools/<plat>/<pak>): the UI resolves
+	// it from /proc/self/exe so a renamed pak still updates itself.  Empty in
+	// tests that do not exercise the self-update.
+	std::string selfPakDir;
 	std::string emusDir() const { return sdcard + "/Emus/" + platform; }
 	std::string corePakDir(const std::string &tag) const { return emusDir() + "/" + tag + ".pak"; }
 	std::string coreTmpDir(const std::string &tag) const { return emusDir() + "/.tmp-" + tag; }
@@ -499,6 +508,88 @@ inline bool unpackArchive(const std::string &archive, const std::string &destDir
 	return true;
 }
 
+// Zip member names, read out of the archive's central directory.
+//
+// The device's unzip is busybox: it has no zipinfo (-Z) mode and its -l format
+// differs from Info-ZIP's, so the names cannot be parsed out of a listing.  The
+// directory is a flat, well-documented structure, so it is read here instead --
+// which also keeps the check hermetic and testable on the build host.
+inline unsigned le16(const std::string &d, size_t i) {
+	return (unsigned)(uint8_t)d[i] | ((unsigned)(uint8_t)d[i + 1] << 8);
+}
+inline uint32_t le32(const std::string &d, size_t i) {
+	return (uint32_t)(uint8_t)d[i] | ((uint32_t)(uint8_t)d[i + 1] << 8) |
+		((uint32_t)(uint8_t)d[i + 2] << 16) | ((uint32_t)(uint8_t)d[i + 3] << 24);
+}
+
+inline bool zipMembers(const std::string &archive, std::vector<std::string> &names, std::string &err) {
+	const std::string data = readFile(archive, 32u << 20);
+	if (data.size() < 22) { err = archive + " is too small to be a zip"; return false; }
+
+	// End of central directory: the last occurrence of its signature, at most
+	// 64 KiB before the end (that is the comment length field's range).
+	size_t eocd = std::string::npos;
+	const size_t stop = data.size() > 66000 ? data.size() - 66000 : 0;
+	for (size_t i = data.size() - 22;; i--) {
+		if (le32(data, i) == 0x06054b50) { eocd = i; break; }
+		if (i == stop) break;
+	}
+	if (eocd == std::string::npos) { err = archive + " is not a zip"; return false; }
+
+	const unsigned count = le16(data, eocd + 10);
+	const uint32_t cdSize = le32(data, eocd + 12);
+	const uint32_t cdOff = le32(data, eocd + 16);
+	if (count == 0 || count > 4096) { err = archive + " has an implausible entry count"; return false; }
+	if ((size_t)cdOff + cdSize > data.size()) { err = archive + " has a truncated directory"; return false; }
+
+	size_t p = cdOff;
+	for (unsigned i = 0; i < count; i++) {
+		if (p + 46 > data.size() || le32(data, p) != 0x02014b50) { err = archive + " has a broken directory entry"; return false; }
+		const unsigned nameLen = le16(data, p + 28);
+		const unsigned extraLen = le16(data, p + 30);
+		const unsigned commentLen = le16(data, p + 32);
+		const uint32_t extAttr = le32(data, p + 38);
+		if (p + 46 + nameLen > data.size()) { err = archive + " has a truncated member name"; return false; }
+		const std::string name = data.substr(p + 46, nameLen);
+		if (!safeArchiveName(name)) { err = "refusing to extract " + name; return false; }
+		// Unix mode in the high half of the external attributes; 0 means the zip
+		// was written by something that does not carry one.
+		const unsigned mode = extAttr >> 16;
+		if (S_ISLNK(mode)) { err = "the archive contains a link; refusing to install it"; return false; }
+		names.push_back(name);
+		p += 46 + (size_t)nameLen + extraLen + commentLen;
+	}
+	return true;
+}
+
+// The same rules for a zip as for a tar: names are checked before anything is
+// written, and the extracted tree is checked for links afterwards.  Our .pakz is
+// built by tools/release.sh and is checksum-verified before it gets here, but
+// this code runs as root on a card that may have been in someone else's hands.
+inline bool unpackZipArchive(const std::string &archive, const std::string &destDir,
+                             const std::string &workDir, std::string &err) {
+	mkdirs(workDir);
+	const std::string errPath = workDir + "/.zip-err";
+
+	std::vector<std::string> names;
+	if (!zipMembers(archive, names, err)) return false;
+
+	mkdirs(destDir);
+	if (runProcess({"unzip", "-o", "-q", archive, "-d", destDir}, "", errPath) != 0) {
+		const std::string why = lastLine(errPath);
+		err = "cannot extract " + archive + (why.empty() ? std::string() : " (" + why + ")");
+		removeTree(destDir);
+		return false;
+	}
+	unlink(errPath.c_str());
+	if (treeHasLinks(destDir)) {
+		err = "the archive contains a link; refusing to install it";
+		removeTree(destDir);
+		return false;
+	}
+	return true;
+}
+
 // Everything this tool does to the network or to archives goes through here, so
 // the tests can replace both with plain local copies and stay offline.
 struct Env {
@@ -509,6 +600,10 @@ struct Env {
 	std::function<bool(const std::string &url, const std::string &dest, int timeoutSec, std::string &err)> fetch;
 	std::function<bool(const std::string &archive, const std::string &destDir,
 	                   const std::string &workDir, std::string &err)> unpack;
+	// The installer's own update is a .pakz, which is a zip (the boot installer
+	// reads it with unzip), so it needs its own extractor.
+	std::function<bool(const std::string &archive, const std::string &destDir,
+	                   const std::string &workDir, std::string &err)> unpackZip;
 
 	std::string urlFor(const std::string &asset) const { return baseUrl + "/" + asset; }
 };
@@ -527,6 +622,10 @@ inline Env defaultEnv(bool online = true) {
 	e.unpack = [](const std::string &archive, const std::string &destDir,
 	              const std::string &workDir, std::string &err) {
 		return unpackArchive(archive, destDir, workDir, err);
+	};
+	e.unpackZip = [](const std::string &archive, const std::string &destDir,
+	                 const std::string &workDir, std::string &err) {
+		return unpackZipArchive(archive, destDir, workDir, err);
 	};
 	return e;
 }
@@ -1396,6 +1495,190 @@ inline Result removeCore(const Paths &p, const std::string &tag) {
 	syncNow();
 	r.ok = true;
 	return r;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// the tool's own update
+//
+// The tool cannot be replaced the way a core pak is (rename the old directory
+// away, rename the new one in): NextUI's launch loop runs `cd <pak> && ./launch.sh`
+// in its own shell, so the pak directory is that shell's working directory, and
+// taking it away leaves the next nextui.elf in a deleted directory.  Instead the
+// files are replaced *inside* the pak, which keeps the directory name and its
+// inode stable:
+//
+//   * every other file is unlinked and renamed into place (vfat has no problem
+//     with that -- the files are not open);
+//   * the running elf cannot be written to (ETXTBSY on vfat), but its path can
+//     be unlinked and a new file renamed onto it -- the running image stays
+//     alive on the inode the loader already opened;
+//   * the elf goes last, so an interrupted update leaves a pak that still
+//     starts, and the payload is checksum-verified and ELF-checked before the
+//     first unlink.
+//
+// The payload is the release's MinarchGL.Installer.pakz, i.e. exactly what the
+// boot installer would apply, so the release publishes one copy of the tool.
+
+// "0.1.10" > "0.1.9".  Missing parts count as 0, so "0.2" == "0.2.0".
+inline int compareVersions(const std::string &a, const std::string &b) {
+	size_t ia = 0, ib = 0;
+	for (;;) {
+		long va = 0, vb = 0;
+		while (ia < a.size() && a[ia] != '.') { if (a[ia] >= '0' && a[ia] <= '9') va = va * 10 + (a[ia] - '0'); ++ia; }
+		while (ib < b.size() && b[ib] != '.') { if (b[ib] >= '0' && b[ib] <= '9') vb = vb * 10 + (b[ib] - '0'); ++ib; }
+		if (va != vb) return va < vb ? -1 : 1;
+		if (ia >= a.size() && ib >= b.size()) return 0;
+		if (ia < a.size()) ++ia;
+		if (ib < b.size()) ++ib;
+	}
+}
+
+// The "version" field of <pak>/pak.json, or "" when it is missing.
+inline std::string readPakVersion(const std::string &pakDir) {
+	const std::string text = readFile(pakDir + "/pak.json", 64 * 1024);
+	if (text.empty()) return std::string();
+	Json json;
+	std::string err;
+	if (!JsonParser(text).parse(json, err)) return std::string();
+	const Json *v = json.find("version");
+	return (v && v->isString()) ? v->text : std::string();
+}
+
+// Every regular file under root, as slash-separated paths relative to it.
+inline bool collectFiles(const std::string &root, const std::string &rel, std::vector<std::string> &out) {
+	const std::string dir = rel.empty() ? root : root + "/" + rel;
+	DIR *d = opendir(dir.c_str());
+	if (!d) return false;
+	struct dirent *e;
+	while ((e = readdir(d)) != NULL) {
+		const std::string name = e->d_name;
+		if (name == "." || name == "..") continue;
+		const std::string childRel = rel.empty() ? name : rel + "/" + name;
+		struct stat st;
+		if (lstat((root + "/" + childRel).c_str(), &st) != 0) continue;
+		if (S_ISDIR(st.st_mode)) collectFiles(root, childRel, out);
+		else if (S_ISREG(st.st_mode)) out.push_back(childRel);
+	}
+	closedir(d);
+	return true;
+}
+
+// Replace the files of pakDir with the ones staged in stagedDir.
+inline bool applyStagedPak(const std::string &stagedDir, const std::string &pakDir,
+                           const std::string &elfName, std::string &err) {
+	std::vector<std::string> files;
+	if (!collectFiles(stagedDir, "", files) || files.empty()) { err = "the update carries no files"; return false; }
+	const auto has = [&files](const std::string &name) {
+		return std::find(files.begin(), files.end(), name) != files.end();
+	};
+	if (!has("pak.json")) { err = "the update has no pak.json"; return false; }
+	if (!has(elfName)) { err = "the update has no " + elfName; return false; }
+
+	// The elf last: until every other file is in place the installed copy keeps
+	// working, and the elf itself is only unlinked right before it is replaced.
+	std::stable_partition(files.begin(), files.end(), [&elfName](const std::string &f) { return f != elfName; });
+	for (const std::string &rel : files) {
+		if (!safeArchiveName(rel)) { err = "refusing to write " + rel; return false; }
+		const std::string from = stagedDir + "/" + rel;
+		const std::string to = pakDir + "/" + rel;
+		const size_t slash = to.rfind('/');
+		if (slash != std::string::npos) mkdirs(to.substr(0, slash));
+		unlink(to.c_str());
+		if (rename(from.c_str(), to.c_str()) != 0) { err = "cannot install " + rel; return false; }
+	}
+	chmod((pakDir + "/" + elfName).c_str(), 0755);
+	chmod((pakDir + "/launch.sh").c_str(), 0755);
+	syncNow();
+	return true;
+}
+
+// The pakz holds the card-relative tree Tools/<plat>/<pak>/..., but the pak
+// directory is named by the release, so it is discovered instead of assumed.
+inline std::string findStagedPak(const std::string &staging, const std::string &platform) {
+	const std::string tools = staging + "/Tools/" + platform;
+	std::string found;
+	forEachDir(tools, [&](const std::string &path, const std::string &) {
+		if (found.empty() && fileExists(path + "/pak.json")) found = path;
+	});
+	return found;
+}
+
+struct InstallerUpdate {
+	bool ok = false;
+	bool changed = false;   // false and ok = the installed copy is already current
+	std::string from;       // version on the card
+	std::string to;         // version in the release
+	std::string err;
+};
+
+// Download, verify, unpack and apply the installer pak the release publishes.
+inline InstallerUpdate updateInstaller(const Paths &p, const Env &env,
+                                       const std::vector<std::pair<std::string, std::string>> &sums,
+                                       const Progress &progress) {
+	InstallerUpdate u;
+	if (p.selfPakDir.empty()) { u.err = "cannot tell which pak this tool runs from."; return u; }
+
+	const std::string sha = sumFor(sums, kInstallerPakzName);
+	if (sha.empty() || !looksLikeSha256(sha)) {
+		u.err = std::string("the release does not publish ") + kInstallerPakzName + ".";
+		return u;
+	}
+	u.from = readPakVersion(p.selfPakDir);
+
+	Asset asset;
+	if (!acquireAsset(p, env, kInstallerPakzName, sha, 0, progress, "installer", asset, u.err)) return u;
+
+	const std::string staging = p.selfPakDir + "/.update";
+	removeTree(staging);
+	report(progress, "Extracting", kInstallerPakzName);
+	if (!env.unpackZip || !env.unpackZip(asset.path, staging, p.dlDir(), u.err)) {
+		removeTree(staging);
+		if (u.err.empty()) u.err = std::string("cannot unpack ") + kInstallerPakzName;
+		return u;
+	}
+
+	const std::string stagedPak = findStagedPak(staging, p.platform);
+	if (stagedPak.empty()) {
+		removeTree(staging);
+		u.err = "the update does not contain the installer pak.";
+		return u;
+	}
+	u.to = readPakVersion(stagedPak);
+	if (u.to.empty()) { removeTree(staging); u.err = "the update has no version."; return u; }
+	if (compareVersions(u.to, u.from) <= 0) {
+		// Nothing to do; the staging tree is dropped and the caller reports the
+		// installed version, so a press is always safe.
+		removeTree(staging);
+		u.ok = true;
+		return u;
+	}
+
+	// The payload is checksum-verified already; this only makes sure the thing we
+	// are about to put on the elf's path is an executable and not a truncated
+	// download that happens to match nothing.
+	const std::string stagedElf = stagedPak + "/minarch-gl-installer.elf";
+	const std::string head = readFile(stagedElf, 4);
+	if (head.size() != 4 || head.compare(0, 4, std::string("\x7f" "ELF", 4)) != 0) {
+		removeTree(staging);
+		u.err = "the update's elf is not an ELF binary.";
+		return u;
+	}
+
+	report(progress, "Installing", "the installer");
+	if (!applyStagedPak(stagedPak, p.selfPakDir, "minarch-gl-installer.elf", u.err)) {
+		// Keep the staging tree: the next press retries from the same bytes.
+		return u;
+	}
+	removeTree(staging);
+	u.ok = true;
+	u.changed = true;
+	return u;
+}
+
+// A failed or interrupted update leaves the unpacked tree behind; it is removed
+// on the next start, when its download is either gone or about to be retried.
+inline void cleanupInstallerStaging(const Paths &p) {
+	if (!p.selfPakDir.empty()) removeTree(p.selfPakDir + "/.update");
 }
 
 ///////////////////////////////////////////////////////////////////////////////

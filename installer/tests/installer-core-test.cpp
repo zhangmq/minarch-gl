@@ -707,6 +707,180 @@ static void testCores(const std::string &root) {
 /////////////////////////////////////////////////////////////////////////////////
 // preferences and the offline policy
 
+// The .pakz is a zip, and the device's unzip is busybox (no -Z, different -l
+// format), so the member names are read out of the central directory here rather
+// than parsed from a listing.  What has to hold: the names come back intact, and
+// something that is not a zip is refused instead of half-parsed.
+static bool makeZip(const std::string &dir, const std::string &out, const std::string &members) {
+	const std::string cmd = "cd '" + dir + "' && { command -v zip >/dev/null 2>&1 && "
+		"zip -qr '" + out + "' " + members + " || bsdtar --format=zip -cf '" + out + "' " + members + "; }";
+	return run(cmd);
+}
+
+static void testZipMembers(const std::string &root) {
+	const std::string dir = root + "/zip-test";
+	mkdirs(dir + "/Tools/h700/X.pak");
+	writeStr(dir + "/Tools/h700/X.pak/launch.sh", "#!/bin/sh\n");
+	writeStr(dir + "/Tools/h700/X.pak/pak.json", "{\"version\": \"0.1.8\"}\n");
+	writeStr(dir + "/post_install.sh", "#!/bin/sh\nexit 0\n");
+	CHECK(makeZip(dir, "t.pakz", "Tools post_install.sh"));
+
+	std::vector<std::string> names;
+	std::string err;
+	CHECK(zipMembers(dir + "/t.pakz", names, err));
+	bool launch = false, pak = false, post = false;
+	for (const std::string &n : names) {
+		if (n == "Tools/h700/X.pak/launch.sh") launch = true;
+		if (n == "Tools/h700/X.pak/pak.json") pak = true;
+		if (n == "post_install.sh") post = true;
+	}
+	CHECK(launch);
+	CHECK(pak);
+	CHECK(post);
+
+	// Not a zip: rejected with an error, and the name list is left alone.
+	writeStr(dir + "/notzip", "hello");
+	std::vector<std::string> none;
+	CHECK(!zipMembers(dir + "/notzip", none, err));
+	CHECK(!err.empty());
+	CHECK(none.empty());
+}
+
+// The tool updates itself inside its own pak (the directory must not move: it is
+// the launch loop's working directory), so the thing to test is that a verified
+// payload replaces the files and that nothing else -- a bad checksum, a tree
+// without a pak, an interrupted unpack -- can damage the installed copy.
+static void testInstallerUpdate(const std::string &root) {
+	CHECK(compareVersions("0.1.7", "0.1.8") < 0);
+	CHECK(compareVersions("0.1.10", "0.1.9") > 0);
+	CHECK(compareVersions("0.2", "0.2.0") == 0);
+	CHECK(compareVersions("0.1.7", "0.1.7") == 0);
+
+	Paths p;
+	p.sdcard = root + "/card-self";
+	p.platform = "h700";
+	p.selfPakDir = p.sdcard + "/Tools/h700/MinarchGL Installer.pak";
+	mkdirs(p.selfPakDir);
+	writeStr(p.selfPakDir + "/launch.sh", "#!/bin/sh\n");
+	writeStr(p.selfPakDir + "/pak.json", "{\"version\": \"0.1.7\"}\n");
+	writeStr(p.selfPakDir + "/minarch-gl-installer.elf", std::string("\x7f" "ELF old-installer\n"));
+	writeStr(p.selfPakDir + "/LICENSE", "old licence\n");
+	CHECK_EQ_STR(readPakVersion(p.selfPakDir), "0.1.7");
+
+	// The release publishes the .pakz; its bytes only have to match the checksum
+	// here, because the extractor is injected below.
+	Release rel(root + "/release-self");
+	writeStr(rel.dir + "/MinarchGL.Installer.pakz", std::string("pakz-bytes"));
+	const std::string pakzSha = sha256Hex(rel.dir + "/MinarchGL.Installer.pakz");
+	std::vector<std::pair<std::string, std::string>> sums = {
+		{"MinarchGL.Installer.pakz", pakzSha},
+		{"minarch-gl_h700.elf", std::string(64, 'a')},
+	};
+
+	const std::string stagedTree = root + "/staged-self";
+	Env env = fakeEnv(rel.dir);
+	env.unpackZip = [stagedTree](const std::string &, const std::string &dest,
+	                             const std::string &, std::string &) {
+		mkdirs(dest);
+		const std::string pak = dest + "/Tools/h700/MinarchGL Installer.pak";
+		mkdirs(pak);
+		writeStr(pak + "/launch.sh", "#!/bin/sh\n# v2\n");
+		writeStr(pak + "/pak.json", "{\"version\": \"0.1.8\"}\n");
+		writeStr(pak + "/minarch-gl-installer.elf", std::string("\x7f" "ELF new-installer\n"));
+		writeStr(pak + "/NOTICE", "notice v2\n");
+		return true;
+	};
+
+	// Same version: nothing is written, and the release is not "upgraded" onto
+	// itself.
+	env.unpackZip = [stagedTree](const std::string &, const std::string &dest,
+	                             const std::string &, std::string &) {
+		mkdirs(dest + "/Tools/h700/MinarchGL Installer.pak");
+		writeStr(dest + "/Tools/h700/MinarchGL Installer.pak/pak.json", "{\"version\": \"0.1.7\"}\n");
+		return true;
+	};
+	InstallerUpdate u = updateInstaller(p, env, sums, Progress());
+	CHECK(u.ok);
+	CHECK(!u.changed);
+	CHECK_EQ_STR(u.from, "0.1.7");
+	CHECK(!dirExists(p.selfPakDir + "/.update"));
+
+	// A checksum that does not match the file never reaches the pak.
+	std::vector<std::pair<std::string, std::string>> badSums = sums;
+	badSums[0].second = std::string(64, 'b');
+	u = updateInstaller(p, env, badSums, Progress());
+	CHECK(!u.ok);
+	CHECK(!u.err.empty());
+
+	// A tree without pak.json is refused.
+	env.unpackZip = [](const std::string &, const std::string &dest, const std::string &, std::string &) {
+		mkdirs(dest + "/Tools/h700/whatever");
+		writeStr(dest + "/Tools/h700/whatever/launch.sh", "#!/bin/sh\n");
+		return true;
+	};
+	u = updateInstaller(p, env, sums, Progress());
+	CHECK(!u.ok);
+	CHECK(!u.err.empty());
+
+	// A release that does not publish the pakz is reported, not guessed at.
+	std::vector<std::pair<std::string, std::string>> noPakz = {{"minarch-gl_h700.elf", std::string(64, 'a')}};
+	u = updateInstaller(p, env, noPakz, Progress());
+	CHECK(!u.ok);
+	CHECK(!u.err.empty());
+
+	CHECK_EQ_STR(readPakVersion(p.selfPakDir), "0.1.7");
+	CHECK_EQ_STR(readFile(p.selfPakDir + "/minarch-gl-installer.elf", 4096),
+	             std::string("\x7f" "ELF old-installer\n"));
+
+	// A newer payload: every file is replaced, new files appear, and the elf
+	// ends up being the new one.
+	env = fakeEnv(rel.dir);
+	env.unpackZip = [](const std::string &, const std::string &dest, const std::string &, std::string &) {
+		mkdirs(dest);
+		const std::string pak = dest + "/Tools/h700/MinarchGL Installer.pak";
+		mkdirs(pak);
+		writeStr(pak + "/launch.sh", "#!/bin/sh\n# v2\n");
+		writeStr(pak + "/pak.json", "{\"version\": \"0.1.8\"}\n");
+		writeStr(pak + "/minarch-gl-installer.elf", std::string("\x7f" "ELF new-installer\n"));
+		writeStr(pak + "/NOTICE", "notice v2\n");
+		return true;
+	};
+	u = updateInstaller(p, env, sums, Progress());
+	CHECK(u.ok);
+	CHECK(u.changed);
+	CHECK_EQ_STR(u.from, "0.1.7");
+	CHECK_EQ_STR(u.to, "0.1.8");
+	CHECK_EQ_STR(readPakVersion(p.selfPakDir), "0.1.8");
+	CHECK_EQ_STR(readFile(p.selfPakDir + "/minarch-gl-installer.elf", 4096),
+	             std::string("\x7f" "ELF new-installer\n"));
+	CHECK(fileExists(p.selfPakDir + "/NOTICE"));
+	CHECK(fileExists(p.selfPakDir + "/LICENSE"));   // untouched files stay
+	CHECK(!dirExists(p.selfPakDir + "/.update"));
+	struct stat st;
+	CHECK(stat((p.selfPakDir + "/minarch-gl-installer.elf").c_str(), &st) == 0 && (st.st_mode & 0111));
+
+	// An elf that is not an ELF is refused before anything is unlinked.
+	writeStr(p.selfPakDir + "/pak.json", "{\"version\": \"0.1.7\"}\n");
+	env.unpackZip = [](const std::string &, const std::string &dest, const std::string &, std::string &) {
+		mkdirs(dest + "/Tools/h700/MinarchGL Installer.pak");
+		const std::string pak = dest + "/Tools/h700/MinarchGL Installer.pak";
+		writeStr(pak + "/pak.json", "{\"version\": \"0.1.9\"}\n");
+		writeStr(pak + "/minarch-gl-installer.elf", "not an elf\n");
+		return true;
+	};
+	u = updateInstaller(p, env, sums, Progress());
+	CHECK(!u.ok);
+	CHECK_EQ_STR(readPakVersion(p.selfPakDir), "0.1.7");
+	CHECK_EQ_STR(readFile(p.selfPakDir + "/minarch-gl-installer.elf", 4096),
+	             std::string("\x7f" "ELF new-installer\n"));
+
+	// The stale tree of a failed attempt is removed at the next start.
+	mkdirs(p.selfPakDir + "/.update");
+	writeStr(p.selfPakDir + "/.update/leftover", "x");
+	cleanupInstallerStaging(p);
+	CHECK(!dirExists(p.selfPakDir + "/.update"));
+}
+
 static void testPrefs(const std::string &root) {
 	Paths p;
 	p.sdcard = root + "/card-prefs";
@@ -800,6 +974,8 @@ int main() {
 	testAssets(root);
 	testFrontendStates(root);
 	testCores(root);
+	testZipMembers(root);
+	testInstallerUpdate(root);
 
 	removeTree(root);
 	if (failures) {
