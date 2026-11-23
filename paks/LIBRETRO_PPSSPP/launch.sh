@@ -1,6 +1,6 @@
 #!/bin/sh
 # ppsspp -- PlayStation Portable, GLES hw-render.  ROMs go in
-# "Roms/PlayStation Portable (LIBRETRO_PPSSPP)".
+# "Roms/Sony PlayStation Portable (LIBRETRO_PPSSPP)".
 #
 # The core's system directory is Bios/<TAG>/; PPSSPP wants its assets under
 # Bios/<TAG>/PPSSPP/ (compat.ini, ppge_atlas.zim, flash0, ...).  The pak ships

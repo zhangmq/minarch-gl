@@ -27,8 +27,8 @@ options, savestates, resume and shaders while running the cores above.
 | | |
 |---|---|
 | Platform | `h700` only (the six core pins were chosen for this SoC) |
-| Status | experimental; installer + frontend exercised on an RGSP (2026-11-20/22), SwanStation, PPSSPP (v0.1.5, GoW CoO 30 fps) and Flycastrophe (v0.1.6, Naomi Crazy Taxi 32 → 55 fps) tested on device. v0.1.7 added `Update Core List` and moved Flycastrophe to 0.3.0; v0.1.8 added `Update Installer` (the tool replaces itself inside its pak, no reboot) and dropped the store pak — the `.pakz` is the only installer package; v0.1.9 moves yabasanshiro (SH2 DMA into VDP2 RAM cost), ppsspp (+77 commits) and mupen64plus-next (3.0 rebase) forward and re-derives its patch |
-| Distribution | one small Tools pak (`Tools/h700/MinarchGL Installer.pak`, ~110 KB); the frontend and the cores are downloaded from this project's releases, and the tool can restore stock at any time |
+| Status | experimental; installer + frontend exercised on an RGSP (2026-11-20/23), with Flycastrophe (Naomi Crazy Taxi 32 → 55 fps), SwanStation, PPSSPP (GoW CoO 30 fps) and the other cores tested on device. v0.1.7 added `Update Core List` and moved Flycastrophe to 0.3.0; v0.1.8 added `Update Installer` (the tool replaces itself inside its pak, no reboot) and dropped the store pak — the `.pakz` is the only installer package; v0.1.9 (2026-11-23) moved yabasanshiro, ppsspp and mupen64plus-next to their tips |
+| Distribution | one small Tools pak (`Tools/h700/MinarchGL Installer.pak`, ~290 KB); the frontend and the cores are downloaded from this project's releases, and the tool can restore stock at any time |
 | Upstream | pinned overlay on [LoveRetro/NextUI](https://github.com/LoveRetro/NextUI) (`main`); base SHA and toolchain digest in `upstream.lock` |
 
 ## Not official
@@ -97,7 +97,12 @@ Why these sources:
   toolchain file. This is the only core source we maintain.
 - **swanstation** — libretro's hard fork of DuckStation. It has a GLES 3.0+
   renderer, an AArch64 JIT, PGXP and a built-in OpenBIOS (so no BIOS image is
-  required); our H700 prototype ran 2D and 3D titles at 59.6 fps at 1x.
+  required). On H700 the **software renderer** is the better default: at 1x the
+  GL path adds no image quality (it exists for resolution upscaling and PGXP)
+  while paying for GPU readbacks and driver overhead, and titles that dipped
+  under OpenGL hold 59.6 fps in software. If you do keep OpenGL, turn off PGXP
+  and `Use Software Renderer For Readbacks` first — both are CPU-heavy and the
+  readback path renders every primitive twice.
 - **ppsspp** — upstream hrydgard/ppsspp; its libretro port lives in-tree under
   `libretro/` and builds with the GLES 2/3 renderer. The gcc 8.3/aarch64 build fixes
   live in `patches/ppsspp.patch`. The pak ships the pinned, **unmodified master
@@ -117,17 +122,19 @@ the build fetches the pin by SHA, so a pin that is older than the branch tip
 yabasanshiro sets a branch override; the other five clone the default branch
 and then check out the SHA on top.
 
-Flycastrophe is a second Dreamcast/NAOMI core, not a replacement for flycast:
-it is the same emulator with a set of speed changes ported from Deadcast (a
-trimmed Flycast for a handheld), it trades accuracy for speed, and its core
-options default to the fast path. It therefore gets its own pak, its own ROM
-folders (`Roms/Sega Dreamcast (LIBRETRO_FLYCASTROPHE)`,
-`Roms/Sega Naomi (LIBRETRO_FLYCASTROPHE)`) and its own save states; the two can
-be installed side by side and are picked per folder. On the H700 it took Naomi
-Crazy Taxi from 32 to 55 fps, while titles that already held 60 fps were
-unchanged. The pak defaults `HLE BIOS` to on: with a real `dc_boot.bin` this
-core stops on the Dreamcast menu for discs whose CDI boot sector is defective,
-where flycast v2.0 booted them directly; Naomi has no BIOS boot and ignores it.
+Flycastrophe is a second Dreamcast/NAOMI core and the **fast** option of the
+two: it is the same emulator with a set of speed changes ported from Deadcast
+(a trimmed Flycast for a handheld), it trades accuracy for speed, and its core
+options default to the fast path. It is still under development upstream, so
+prefer it when a game needs the frames and keep flycast for whatever it
+regresses. It gets its own pak, its own ROM folders (`Roms/Sega Dreamcast
+(LIBRETRO_FLYCASTROPHE)`, `Roms/Sega Naomi (LIBRETRO_FLYCASTROPHE)`) and its
+own save states; the two can be installed side by side and are picked per
+folder. On the H700 it took Naomi Crazy Taxi from 32 to 55 fps, while titles
+that already held 60 fps were unchanged. The pak defaults `HLE BIOS` to on:
+with a real `dc_boot.bin` this core stops on the Dreamcast menu for discs whose
+CDI boot sector is defective, where flycast v2.0 booted them directly; Naomi
+has no BIOS boot and ignores it.
 
 ## Build
 
@@ -277,14 +284,24 @@ installed pak stays recognisable.
 ROM folders use the tag of the core pak that the tool installs:
 
 ```
-Roms/Sega Dreamcast (LIBRETRO_FLYCAST)/        Sega Dreamcast   (flycast)
-Roms/Sega Naomi (LIBRETRO_FLYCAST)/            Sega Naomi       (flycast, same tag/pak)
-Roms/Nintendo 64 (LIBRETRO_MUPEN64PLUS)/       Nintendo 64      (mupen64plus-next)
-Roms/Sega Saturn (LIBRETRO_YABASANSHIRO)/      Sega Saturn      (yabasanshiro)
-Roms/Sega Titan Video (LIBRETRO_YABASANSHIRO)/ Sega ST-V        (yabasanshiro, same tag/pak)
-Roms/Sony PlayStation (LIBRETRO_SWANSTATION)/  Sony PlayStation  (swanstation)
-Roms/PlayStation Portable (LIBRETRO_PPSSPP)/  PlayStation Portable (ppsspp)
+Roms/Sega Dreamcast (LIBRETRO_FLYCAST)/            Sega Dreamcast    (flycast)
+Roms/Sega Dreamcast (LIBRETRO_FLYCASTROPHE)/       Sega Dreamcast    (flycastrophe, the faster one)
+Roms/Sega Naomi (LIBRETRO_FLYCAST)/                Sega Naomi        (flycast, same tag/pak)
+Roms/Sega Naomi (LIBRETRO_FLYCASTROPHE)/           Sega Naomi        (flycastrophe, same tag/pak)
+Roms/Nintendo 64 (LIBRETRO_MUPEN64PLUS)/           Nintendo 64       (mupen64plus-next)
+Roms/Sega Saturn (LIBRETRO_YABASANSHIRO)/          Sega Saturn       (yabasanshiro)
+Roms/Sega Titan Video (LIBRETRO_YABASANSHIRO)/     Sega ST-V         (yabasanshiro, same tag/pak)
+Roms/Sony PlayStation (LIBRETRO_SWANSTATION)/      Sony PlayStation  (swanstation)
+Roms/Sony PlayStation Portable (LIBRETRO_PPSSPP)/  Sony PlayStation Portable (ppsspp)
 ```
+
+Two paks own Dreamcast and NAOMI on purpose. **flycast** (`v2.0`) is the safe
+pick — upstream's compatibility core. **If you care about performance, prefer
+`flycastrophe`**: on the H700 it takes Naomi Crazy Taxi from 32 to 55 fps and
+leaves titles that already held 60 fps alone. It is still **under development
+upstream**, though, so treat it as the fast option rather than the fallback:
+keep flycast installed and move a game back to its folder when flycastrophe
+regresses it.
 
 BIOS files go under `/Bios/<TAG>/`: that is the directory minarch hands to the
 core as its libretro system directory, and where every NextUI pak expects them.
@@ -304,7 +321,7 @@ upstream `assets/` contents under `Bios/<TAG>/PPSSPP/` (fonts, flash0,
 `ppge_atlas.zim`, `lang/`, `compat.ini`).  The `LIBRETRO_PPSSPP` pak ships the
 pinned, unmodified master assets and its `launch.sh` seeds that directory on
 first run.  Do not mix assets from a different PPSSPP build.  On H700 the pak
-also installs a four-line per-game compat diff at
+also installs a small per-game compat diff (two sections, four settings) at
 `Saves/<TAG>/PSP/SYSTEM/compat.ini` (note the extra `PSP/`; this is PPSSPP's
 `memstick/PSP/SYSTEM`, not `Saves/<TAG>/SYSTEM`) that enables the 30 fps hack
 and disables the 60 fps hack for God of War: Chains of Olympus.  The shipped
@@ -317,13 +334,15 @@ pak; `LIBRETRO_SWANSTATION` owns the PS1 folder, so existing
 `Roms/Sony PlayStation (PS)` trees need renaming to
 `Roms/Sony PlayStation (LIBRETRO_SWANSTATION)` (the installer creates the new
 directory when you press CREATE).  `LIBRETRO_PPSSPP` likewise owns
-`Roms/PlayStation Portable (LIBRETRO_PPSSPP)`; the existing standalone
+`Roms/Sony PlayStation Portable (LIBRETRO_PPSSPP)`; the existing standalone
 `Emus/h700/PSP.pak` keeps using `Roms/PlayStation Portable (PSP)`, so testing
 both means copying the ROMs (or renaming the folder and giving the standalone
-its own copy).
+its own copy).  Only the suffix matters to the menu: a folder is matched by its
+`(<TAG>)`, so a card that already has the older
+`Roms/PlayStation Portable (LIBRETRO_PPSSPP)` keeps working unrenamed.
 
 ## Upstream sync
 
-`overlay.map` lists the 15 files that are forks of upstream files; they are
+`overlay.map` lists the 16 files that are forks of upstream files; they are
 merged three-way on every bump (`tools/sync.py merge --to <sha>`). Everything
 else changed upstream arrives for free through the assembled tree.
