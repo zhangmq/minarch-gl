@@ -55,7 +55,7 @@ flycast_MAKE = git submodule update --init --recursive core/deps/libchdr && \
 # selects the GLES3 renderer (GL_LIB := -lGLESv2), i.e. the same libretro
 # hw-render path minarch-gl drives for flycast.
 mupen64plus_next_REPO = https://github.com/libretro/mupen64plus-libretro-nx
-mupen64plus_next_HASH = 15bada85906593376e8fd697f1b0b3af3a20f512
+mupen64plus_next_HASH = 8623e490a8773fcb6c10f424cebbdb0ac44e88ea
 # FRESH-CLONE CAVEAT: upstream's develop tree carries gitlinks
 # (mupen64plus-rsp-paraLLEl, ...-video-paraLLEl) but ships no .gitmodules, so the
 # template's `git submodule update --init --recursive` aborts with "No url found for
@@ -86,7 +86,7 @@ mupen64plus_next_SUBMODULES =
 # (see .docs/FEEDBACK-YABA-BUILD-20261118.md).
 yabasanshiro_REPO = https://github.com/zhangmq/yabasanshiro-pirry
 yabasanshiro_BRANCH = h700-libretro
-yabasanshiro_HASH = f86b66ea4da77b1c891c71e1b99433227d7abeca
+yabasanshiro_HASH = fb66925f5662489b96363d8f7e0b5a766e4176bb
 yabasanshiro_BUILD_PATH = yabasanshiro
 yabasanshiro_CORE = build-h700/yabasanshiro_libretro.so
 # musashi's generated m68k sources (m68kops.c / m68kop*.c) are a pure function
@@ -94,13 +94,15 @@ yabasanshiro_CORE = build-h700/yabasanshiro_libretro.so
 # gcc 13) and run it into the staged dependency tree.  GCC_VERSION=8 matches the
 # image's 8.3: the engine picks <experimental/filesystem> below gcc 9, and
 # -lstdc++fs is what resolves those symbols.
-# -DCMAKE_SKIP_RPATH=ON: the core links libmali/libEGL by absolute path from
-# H700_DEPS, and CMake's default build rpath writes that build directory into
-# the .so (DT_RPATH, which outranks LD_LIBRARY_PATH and ld.so.cache).  The
-# device does not have it, so it is dead weight there -- and a stale SONAME stub
-# at that path would shadow the real driver.  Verified 2026-11-22: with the flag
-# the generated link line carries no -rpath; tools/release.sh now rejects a core
-# that ships one.
+# -DCMAKE_SKIP_RPATH=ON is kept as release hygiene: the core no longer links
+# libmali/libEGL, but a build rpath from any staged dependency would still be
+# wrong on the device.  tools/release.sh rejects a core that ships one.
+#
+# Since h700-libretro fb66925 (2026-11-29) the core resolves every gl*/egl*
+# entry point at runtime: first through the frontend's get_proc_address, then
+# dlsym(RTLD_DEFAULT).  It no longer links ${H700_DEPS}/lib/libmali.so.0 or
+# libEGL.so.1, so the H700_DEPS path below is only needed for the GLES3
+# headers (ygl_glproc.h includes <GLES3/gl32.h>).
 #
 # yabasanshiro's tuning: the toolchain's MGL_TUNE, spelled out per core so one
 # flag can be flipped for an A/B without touching the other cores.
@@ -108,9 +110,7 @@ yabasanshiro_CORE = build-h700/yabasanshiro_libretro.so
 # yaba does NOT use -ffast-math (2026-11-19).  With it, Daytona USA's demo
 # mountain texture shows a radial artefact; without it the texture is correct.
 # Everything else stays: -O3, the A53 tuning, -fno-strict-aliasing.  The other
-# two cores keep their own flags (all three used to share MGL_TUNE).  Both yaba
-# variants link libmali directly instead of the libEGL shim (which exports no
-# symbols on this SoC).
+# two cores keep their own flags (all three used to share MGL_TUNE).
 #
 # The rest of the bundle was not bisected: if the lost float throughput ever
 # matters, try -ffast-math with -fno-reciprocal-math / -fno-finite-math-only
@@ -132,7 +132,6 @@ yabasanshiro_MAKE = rm -rf deps build-h700 && \
 		-DCMAKE_CXX_STANDARD=17 -DCMAKE_CXX_STANDARD_REQUIRED=ON \
 		-DCMAKE_CXX_STANDARD_LIBRARIES=-lstdc++fs \
 		-DCMAKE_SKIP_RPATH=ON \
-		-DCMAKE_SHARED_LINKER_FLAGS="-Wl,--no-as-needed" \
 		-DCMAKE_C_FLAGS="$(yaba_flags)" -DCMAKE_CXX_FLAGS="$(yaba_flags)" && \
 	cmake --build build-h700 --parallel 4 --target yabasanshiro_libretro #
 # No submodules are needed: libchdr/zlib come from the staged cache and the
@@ -185,7 +184,7 @@ swanstation_SUBMODULES =
 # provides the symbols (DT_NEEDED is libmali.so.0).  -lstdc++fs is for the
 # armips <filesystem> use under gcc 8.
 ppsspp_REPO = https://github.com/hrydgard/ppsspp
-ppsspp_HASH = a2f0b60d4576ecc20773f7b1894ac9612fe37aa6
+ppsspp_HASH = b912959097096b5fb3fb10cd5e01f8d20e981c14
 ppsspp_BUILD_PATH = ppsspp/libretro
 ppsspp_CORE = ppsspp_libretro.so
 # Only the submodules the libretro build actually reads.  A blank value would

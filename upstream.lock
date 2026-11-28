@@ -22,4 +22,4 @@ TOOLCHAIN_DIGEST=sha256:bf5d8f9f5442cad789aa77176bc059ec823caefa3258bf30780eee68
 # (tools/sync.py check verifies the two agree).
 YABAUSE_REPO=zhangmq/yabasanshiro-pirry
 YABAUSE_REF=h700-libretro
-YABAUSE_SHA=eb32d3f9667ca1e00afcf633881c9484624b8f6f
+YABAUSE_SHA=fb66925f5662489b96363d8f7e0b5a766e4176bb

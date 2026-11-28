@@ -175,19 +175,24 @@ pin() {
 
 # Some cores need more than a source tree: yabasanshiro's CMake port wants two
 # pinned dependency trees plus musashi's generated 68k sources in a directory it
-# is pointed at, and links the vendor GL/EGL blobs by absolute path.  Stage both
-# into the build tree, from a cache that only has to be filled once.
+# is pointed at.  Stage both into the build tree, from a cache that only has to
+# be filled once.
 #
 #   .cache/cores/yaba-deps/{libchdr,zlib}   git clones at the pins the core's
 #                                           CMakeLists names (see the header of
 #                                           build-libretro.sh upstream); musashi
 #                                           is generated during the build.
-#   .cache/cores/h700-deps/lib/{libEGL.so.1,libmali.so.0}
-#                                           the device's GL/EGL libs; the image
-#                                           sysroot has libEGL but not the Mali
-#                                           blob.  Seeded from $GL_DEPS_SRC
-#                                           (default /home/zmq/projects/h700-deps)
-#                                           or by hand from the device.
+#   .cache/cores/h700-deps/include          GLES3/EGL headers.  yaba's runtime
+#                                           GL resolver includes <GLES3/gl32.h>;
+#                                           the image sysroot has it, but the
+#                                           staged copy keeps fresh/CI builds
+#                                           on the same headers as the device.
+#   .cache/cores/h700-deps/lib/libmali.so.0 ppsspp still links the vendor driver
+#                                           through ../glshim (the sysroot's
+#                                           -lGLESv2/-lEGL stubs export nothing).
+#                                           yaba no longer links it since
+#                                           fb66925: it resolves gl* through the
+#                                           frontend callback / dlsym.
 stage_core_deps() {
 	say "staging core build files and dependencies"
 	# Our core makefile/toolchain/headers are not part of NextUI, so they live in
@@ -243,16 +248,10 @@ stage_core_deps() {
 			aarch64-nextui-linux-gnu-gcc -shared -fPIC -Wl,-soname,libmali.so.0 \
 			-o /workspace/'"$CORES_PLATFORM"'/cores/h700-deps/lib/libmali.so.0 /tmp/mgl-stub.c'
 	fi
-	# The H700 port's CMakeLists links ${H700_DEPS}/lib/libEGL.so.1 *and*
-	# libmali.so.0.  On this SoC libEGL.so.1 is a 4 KB shim that exports no
-	# symbols at all -- every egl*/gl* entry point lives in libmali.so.0, and
-	# the core imports no egl* symbol -- so the only thing that entry adds is a
-	# DT_NEEDED record.  Point it at libmali, so the core links the driver
-	# directly, the way the hand-built core the user tested (Ubuntu gcc 12,
-	# NEEDED libmali alone) does; with the libEGL entry the yaba VDP output
-	# showed a radial artefact on Daytona USA's mountain texture (2026-11-19).
-	# The symlink keeps the CMakeLists' absolute path valid, and the linker
-	# reads libmali's SONAME, so the duplicate entry collapses into one.
+	# ppsspp's libretro Makefile links -lGLESv2/-lEGL through ../glshim; the
+	# sysroot's stubs export no symbols, so both symlinks point at the vendor
+	# driver and DT_NEEDED records libmali.so.0.  yaba stopped linking the
+	# driver at fb66925 (runtime resolver); it only reads the headers above.
 	ln -sf libmali.so.0 "$TREE/workspace/$CORES_PLATFORM/cores/h700-deps/lib/libEGL.so.1"
 	# The core's CMakeLists adds ${H700_DEPS}/include and expects GLES3/EGL
 	# headers there; the image sysroot has most of them but not GLES3/gl3ext.h

@@ -27,7 +27,7 @@ options, savestates, resume and shaders while running the cores above.
 | | |
 |---|---|
 | Platform | `h700` only (the six core pins were chosen for this SoC) |
-| Status | experimental; installer + frontend exercised on an RGSP (2026-11-20/23), with Flycastrophe (Naomi Crazy Taxi 32 → 55 fps), SwanStation, PPSSPP (GoW CoO 30 fps) and the other cores tested on device. v0.1.7 added `Update Core List` and moved Flycastrophe to 0.3.0; v0.1.8 added `Update Installer` (the tool replaces itself inside its pak, no reboot) and dropped the store pak — the `.pakz` is the only installer package; v0.1.9 (2026-11-23) moved yabasanshiro, ppsspp and mupen64plus-next to their tips |
+| Status | experimental; installer + frontend exercised on an RGSP (2026-11-20/23), with Flycastrophe (Naomi Crazy Taxi 32 → 55 fps), SwanStation, PPSSPP (GoW CoO 30 fps) and the other cores tested on device. v0.1.7 added `Update Core List` and moved Flycastrophe to 0.3.0; v0.1.8 added `Update Installer` (the tool replaces itself inside its pak, no reboot) and dropped the store pak — the `.pakz` is the only installer package; v0.1.9 (2026-11-23) moved yabasanshiro, ppsspp and mupen64plus-next to their tips; v0.1.10 (2026-11-29) is a core-only refresh (yabasanshiro fb66925 with runtime GL resolution, ppsspp b9129590, mupen64plus-next 8623e490) with the frontend and installer unchanged |
 | Distribution | one small Tools pak (`Tools/h700/MinarchGL Installer.pak`, ~290 KB); the frontend and the cores are downloaded from this project's releases, and the tool can restore stock at any time |
 | Upstream | pinned overlay on [LoveRetro/NextUI](https://github.com/LoveRetro/NextUI) (`main`); base SHA and toolchain digest in `upstream.lock` |
 
@@ -71,10 +71,10 @@ Emulation comes from six libretro cores, each built from a pinned commit
 | pak | core | source | ref | commit |
 |---|---|---|---|---|
 | `LIBRETRO_FLYCAST` | flycast | [flyinghead/flycast](https://github.com/flyinghead/flycast) | tag `v2.0` | `aa97a6d6` |
-| `LIBRETRO_MUPEN64PLUS` | mupen64plus_next | [libretro/mupen64plus-libretro-nx](https://github.com/libretro/mupen64plus-libretro-nx) | `master` | `15bada85` |
-| `LIBRETRO_YABASANSHIRO` | yabasanshiro | [zhangmq/yabasanshiro-pirry](https://github.com/zhangmq/yabasanshiro-pirry) | `h700-libretro` | `f86b66ea` |
+| `LIBRETRO_MUPEN64PLUS` | mupen64plus_next | [libretro/mupen64plus-libretro-nx](https://github.com/libretro/mupen64plus-libretro-nx) | `develop` | `8623e490` |
+| `LIBRETRO_YABASANSHIRO` | yabasanshiro | [zhangmq/yabasanshiro-pirry](https://github.com/zhangmq/yabasanshiro-pirry) | `h700-libretro` | `fb66925f` |
 | `LIBRETRO_SWANSTATION` | swanstation | [libretro/swanstation](https://github.com/libretro/swanstation) | `main` | `631f0fb3` |
-| `LIBRETRO_PPSSPP` | ppsspp | [hrydgard/ppsspp](https://github.com/hrydgard/ppsspp) | `master` | `a2f0b60d` |
+| `LIBRETRO_PPSSPP` | ppsspp | [hrydgard/ppsspp](https://github.com/hrydgard/ppsspp) | `master` | `b9129590` |
 | `LIBRETRO_FLYCASTROPHE` | flycastrophe | [Helaas/Flycastrophe](https://github.com/Helaas/Flycastrophe) | `main` | `8981ec5` |
 
 The pins are the only version this project tracks: they live in
@@ -167,13 +167,15 @@ is not listed in the Pak Store, and the `.pakz` doubles as its self-update.
 The toolchain is pinned by digest in `upstream.lock`; the frontend elf is
 reproducible from (base sha, overlay commit, toolchain digest).
 
-No vendor blob is needed to build: the Saturn core links against the Mali
-driver only for the `DT_NEEDED` record, and PPSSPP is linked with unresolved
-GL/EGL symbols that the device's `libmali` resolves at run time.  When `.cache/cores/h700-deps` has no
-`libmali.so.0` (a clean checkout, or CI), `tools/build.sh` generates a stub with
-the same SONAME and `--no-as-needed` keeps the entry; the device's real driver
-resolves the `gl*` symbols at run time.  The same workflow builds a release on
-GitHub Actions when a `v*` tag is pushed (`.github/workflows/release.yml`).
+No vendor blob is needed to build.  Since yaba `fb66925` (2026-11-29) the Saturn
+core resolves every GL entry point at run time through the frontend's
+`get_proc_address` and no longer links `libmali`/`libEGL`; PPSSPP still links
+unresolved GL/EGL symbols that the device's `libmali` resolves at run time.
+When `.cache/cores/h700-deps` has no `libmali.so.0` (a clean checkout, or CI),
+`tools/build.sh` generates a stub with the same SONAME and `--no-as-needed`
+keeps the PPSSPP entry; the device's real driver resolves the `gl*` symbols at
+run time.  The same workflow builds a release on GitHub Actions when a `v*` tag
+is pushed (`.github/workflows/release.yml`).
 
 ## Install
 
